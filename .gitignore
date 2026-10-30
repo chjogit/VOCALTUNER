@@ -1,0 +1,9 @@
+# 외부 SDK (직접 받아서 넣기)
+/JUCE/
+/ARA_SDK/
+# 빌드 결과
+/build/
+/out/
+/installer/Output/
+.vs/
+*.user

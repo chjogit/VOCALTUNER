@@ -95,9 +95,32 @@
 - ARA2를 지원하는 VST3 호스트 — **Studio One 6** 에서 확인
 - (선택) 가사 기반 정렬: whisper.cpp 모델 약 141MB 추가 설치
 
+## 🛠️ 직접 빌드하기
+
+Visual Studio 2022(C++ 데스크톱), CMake 3.22 이상이 필요합니다.
+
+```powershell
+git clone https://github.com/chjogit/VOCALTUNER.git
+cd VOCALTUNER
+git clone --depth 1 https://github.com/juce-framework/JUCE.git
+git clone --recursive https://github.com/Celemony/ARA_SDK.git
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release
+```
+
+결과물은 `build\VocalTuner_artefacts\Release\VST3\VocalTuner.vst3` 입니다.
+설치 파일은 [Inno Setup 6](https://jrsoftware.org/isinfo.php)을 설치한 뒤 `installer\build_installer.ps1`로 만듭니다.
+
+JUCE 없이 분석·렌더 코어와 테스트만 빌드하려면 `-DVOCALTUNER_CORE_ONLY=ON`을 붙이고 `ctest`로 확인합니다.
+
 ## 🙏 사용한 라이브러리
 
 [JUCE](https://juce.com) · [ARA SDK](https://github.com/Celemony/ARA_SDK) · [WORLD](https://github.com/mmorise/World) · [whisper.cpp](https://github.com/ggerganov/whisper.cpp)
+
+## 📄 라이선스
+
+[GNU AGPLv3](LICENSE). 고쳐서 배포하거나 서비스할 때는 바뀐 소스도 같은 라이선스로 공개해야 합니다.
+JUCE(AGPLv3/상용), ARA SDK(Apache 2.0), WORLD(수정 BSD), whisper.cpp(MIT)는 각자의 라이선스를 따릅니다.
 
 VST는 Steinberg Media Technologies GmbH의 상표입니다.
 
