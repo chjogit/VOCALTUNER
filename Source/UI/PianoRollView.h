@@ -77,8 +77,12 @@ public:
     void setPlayhead(double songSec, bool isPlaying);
     void setUndoRedoEnabled(bool canUndo, bool canRedo);
     const std::vector<size_t>& selectedBlocks() const noexcept { return selection; }
-    // 숫자 키 1~5, Ctrl+1~3(모드), Ctrl+A. 키보드 포커스를 잡지 않기 위해 타이머에서 키 상태를 직접 읽는다.
+    // 숫자 키 1~6(도구). 포커스가 없어도 마우스가 위에 있으면 동작하도록 타이머에서 키 상태를 직접 읽는다.
     void pollShortcutKeys();
+    // Ctrl+Z / Ctrl+Shift+Z / Ctrl+A / Ctrl+1~4는 여기서 처리하고 호스트(Studio One)에 넘기지 않는다.
+    // 그 밖의 키(스페이스 등)는 false를 돌려 호스트가 받는다.
+    bool keyPressed(const juce::KeyPress&) override;
+    void mouseEnter(const juce::MouseEvent&) override;
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -284,7 +288,7 @@ private:
     mutable std::vector<size_t> handlesUserKey;
     mutable size_t handlesBeginFrame = 0;
 
-    std::array<bool, 8> keyWasDown {};      // 1~6, A, Z
+    std::array<bool, 6> keyWasDown {};      // 1~6
     double playheadSec = 0.0;
     bool playing = false;
 };

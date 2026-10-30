@@ -309,15 +309,16 @@ void accumulate(AudioPlanes& out, const ChunkAudio& chunk, const ChunkSpan& span
         }
 }
 
-void applyGain(AudioPlanes& out, const EditGrid& grid, double period)
+// channels[c][0]이 출력의 startSample 번째 샘플
+void applyGainAt(std::vector<std::vector<float>>& channels, size_t startSample, int sampleRate, const EditGrid& grid, double period)
 {
     if (std::all_of(grid.gainDb.begin(), grid.gainDb.end(), [](double g) { return std::abs(g) < 1e-6; }))
         return;
     const auto last = grid.size() - 1;
-    for (auto& ch : out.channels)
+    for (auto& ch : channels)
         for (size_t p = 0; p < ch.size(); ++p)
         {
-            const auto pos = static_cast<double>(p) / out.sampleRate / period;
+            const auto pos = static_cast<double>(startSample + p) / sampleRate / period;
             const auto i = std::min(last, static_cast<size_t>(pos));
             const auto j = std::min(last, i + 1);
             const auto db = grid.gainDb[i] + (grid.gainDb[j] - grid.gainDb[i]) * (pos - static_cast<double>(i));
@@ -368,6 +369,31 @@ std::optional<AudioPlanes> renderEdited(const AudioPlanes& source, const VocalFe
     out.channels.assign(source.channels.size(), std::vector<float>(source.length(), 0.0f));
     for (size_t k = 0; k < spans.size(); ++k)
         accumulate(out, chunks[k], spans[k], k == 0, k + 1 == spans.size(), period);
-    applyGain(out, grid, period);
+    applyGainAt(out.channels, 0, out.sampleRate, grid, period);
+    return out;
+}
+
+std::optional<RenderedSegment> renderEditedRange(const AudioPlanes& source, const VocalFeatures& features,
+                                                 const std::vector<VocalBlock>& blocks, size_t beginSample, size_t endSample,
+                                                 const RenderOptions& options)
+{
+    if (source.channels.empty() || features.size() == 0 || beginSample >= std::min(endSample, source.length()))
+        return RenderedSegment{};
+    if (options.shouldCancel && options.shouldCancel())
+        return std::nullopt;
+    const auto period = features.framePeriodMs / 1000.0;
+    const auto grid = buildGrid(source.length(), source.sampleRate, features, blocks);
+    const auto toFrame = [&](size_t sample) { return std::min(grid.size(), static_cast<size_t>(static_cast<double>(sample) / source.sampleRate / period)); };
+    const auto pad = static_cast<size_t>(padSeconds / period);
+    const auto a = toFrame(beginSample), b = std::max(a + 1, toFrame(endSample) + 1);
+    const ChunkSpan span{a, b, a > pad ? a - pad : 0, std::min(grid.size(), b + pad)};
+    auto chunk = renderChunk(source, features, grid, span, options.unchangedSemitones);
+    RenderedSegment out;
+    out.startSample = chunk.startSample;
+    out.audio.sampleRate = source.sampleRate;
+    for (auto& ch : chunk.channels)
+        ch.resize(std::min(ch.size(), source.length() - std::min(source.length(), chunk.startSample)));
+    out.audio.channels = std::move(chunk.channels);
+    applyGainAt(out.audio.channels, out.startSample, source.sampleRate, grid, period);
     return out;
 }

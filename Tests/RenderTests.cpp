@@ -169,6 +169,25 @@ void testCancelAndStereo()
     check(out && out->channels.size() == 2, "스테레오 채널 수 유지");
 }
 
+void testRange()
+{
+    Fixture fx;
+    for (auto& b : fx.blocks)
+        b.pitchShift = 2.0;
+    const auto begin = static_cast<size_t>(0.6 * sr), end = static_cast<size_t>(1.4 * sr);
+    const auto seg = renderEditedRange(fx.audio, fx.features, fx.blocks, begin, end);
+    check(seg.has_value() && seg->startSample <= begin && seg->endSample() >= end, "구간 렌더: 요청 구간을 덮음");
+    check(seg->endSample() <= fx.audio.length(), "구간 렌더: 원본 길이 안");
+    std::vector<float> placed(fx.audio.length(), 0.0f);
+    std::copy(seg->audio.channels[0].begin(), seg->audio.channels[0].end(), placed.begin() + static_cast<long>(seg->startSample));
+    const auto after = medianMidi(placed, 0.7, 1.3), before = medianMidi(fx.audio.channels[0], 0.7, 1.3);
+    std::printf("  range pitch %.3f -> %.3f\n", before, after);
+    check(std::abs(after - before - 2.0) < 0.2, "구간 렌더: +2 반음");
+    RenderOptions cancel;
+    cancel.shouldCancel = [] { return true; };
+    check(! renderEditedRange(fx.audio, fx.features, fx.blocks, begin, end, cancel).has_value(), "구간 렌더: 취소");
+}
+
 void testTimeMap()
 {
     Fixture fx;
@@ -190,6 +209,7 @@ int main()
     testTimeShift();
     testLoudness();
     testCancelAndStereo();
+    testRange();
     std::printf(failures == 0 ? "ALL PASS\n" : "%d FAILED\n", failures);
     return failures == 0 ? 0 : 1;
 }

@@ -38,8 +38,11 @@ void RenderCache::willDestroyAudioSource(juce::ARAAudioSource* source)
         {
             retired.push_back(std::move(it->second.rendered));     // 재생 중인 쪽이 쥐고 있을 수 있음
             retired.push_back(std::move(it->second.sourceAudio));
+            retired.push_back(std::move(it->second.segment));
             entries.erase(it);
         }
+        if (previewJob.source == source)
+            previewJob = {};
     }
     removing = nullptr;
 }
@@ -124,13 +127,15 @@ void RenderCache::publish(juce::ARAAudioSource* source, std::shared_ptr<const Au
         retired.push_back(std::move(it->second.rendered));    // 오디오 스레드가 아직 쥐고 있을 수 있음
     it->second.rendered = std::move(audio);
     it->second.renderedFor = std::move(blocks);
+    if (it->second.segment != nullptr)
+        retired.push_back(std::move(it->second.segment));     // 전체 렌더가 더 새롭다
     it->second.audioFeatures = it->second.seenFeatures;
 }
 
 // 오디오 스레드에서 큰 버퍼가 해제되면 재생이 끊긴다. 아무도 쓰지 않는 것만 여기(렌더 스레드)서 지운다.
 void RenderCache::releaseRetired()
 {
-    std::vector<std::shared_ptr<const AudioPlanes>> unused;
+    std::vector<std::shared_ptr<const void>> unused;
     {
         const std::lock_guard<std::mutex> guard(mutex);
         const auto free = std::stable_partition(retired.begin(), retired.end(), [](const auto& p) { return p.use_count() > 1; });
@@ -178,7 +183,8 @@ void RenderCache::service(juce::ARAAudioSource* source)
 
     RenderOptions options;
     options.parallelFor = analysis.makeParallelFor();
-    options.shouldCancel = [&] { return threadShouldExit() || removing.load() == source || analysis.getBlocks(source) != blocks; };
+    options.shouldCancel = [&] { return threadShouldExit() || removing.load() == source || previewActive.load()
+                                        || analysis.getBlocks(source) != blocks; };
     rendering = true;
     auto result = renderEdited(*sourceAudio, *features, *blocks, options);
     rendering = false;
@@ -190,6 +196,12 @@ void RenderCache::run()
 {
     while (! threadShouldExit())
     {
+        if (servicePreview())
+        {
+            releaseRetired();
+            wait(20);       // 누르고 있는 동안: 블록이 바뀌면 바로 다시 렌더
+            continue;
+        }
         std::vector<juce::ARAAudioSource*> sources;
         {
             const std::lock_guard<std::mutex> guard(mutex);

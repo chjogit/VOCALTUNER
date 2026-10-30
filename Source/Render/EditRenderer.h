@@ -28,5 +28,17 @@ struct RenderOptions
 std::optional<AudioPlanes> renderEdited(const AudioPlanes& source, const VocalFeatures& features,
                                         const std::vector<VocalBlock>& blocks, const RenderOptions& = {});
 
+// 출력 구간 [beginSample, endSample)만 앞뒤 여유를 붙여 렌더한다 (블록 미리 듣기용, 전체 렌더보다 훨씬 빠름).
+// audio.channels[c][0]이 출력의 startSample 번째 샘플. 취소되면 nullopt.
+struct RenderedSegment
+{
+    size_t startSample = 0;
+    AudioPlanes audio;
+    size_t endSample() const noexcept { return startSample + audio.length(); }
+};
+std::optional<RenderedSegment> renderEditedRange(const AudioPlanes& source, const VocalFeatures& features,
+                                                 const std::vector<VocalBlock>& blocks, size_t beginSample, size_t endSample,
+                                                 const RenderOptions& = {});
+
 // 이 블록 목록이 소리를 바꾸는지 (바꾸지 않으면 원본을 그대로 쓰면 됨)
 bool changesAudio(const std::vector<VocalBlock>& blocks, const VocalFeatures& features, double unchangedSemitones = 0.12);

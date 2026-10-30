@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(VocalTuner VERSION 0.1.0)
+project(VocalTuner VERSION 1.0.0)
 
 option(VOCALTUNER_BUILD_TESTS "Build unit tests" ON)
 # ON이면 JUCE 없이 vocaltuner_core + 테스트만 빌드 (Linux CI/검증용)
@@ -83,6 +83,7 @@ target_sources(VocalTuner
         Source/AlignmentFitQueue.cpp
         Source/PlaybackRenderer.cpp
         Source/RenderCache.cpp
+        Source/RenderCachePreview.cpp
         Source/Alignment/WhisperRunner.cpp
         Source/UI/PianoRollView.cpp
         Source/UI/PianoRollEdit.cpp
