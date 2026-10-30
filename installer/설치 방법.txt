@@ -1,0 +1,10 @@
+﻿VocalTuner 설치 방법 (Windows 10/11 64비트)
+
+1. VocalTuner-x.y.z-Setup.exe 를 실행합니다.
+   - "Windows의 PC 보호" 창이 뜨면 [추가 정보] → [실행]을 누릅니다. (코드 서명이 없는 개인 배포판이라 뜨는 창입니다)
+2. 설치가 끝나면 플러그인이 다음 위치에 들어갑니다.
+   C:\Program Files\Common Files\VST3\VocalTuner.vst3
+3. Studio One을 다시 시작합니다. 플러그인이 안 보이면 [옵션] → [위치] → [VST 플러그인] → [재검색].
+4. 보컬 이벤트를 선택하고 이벤트 FX(ARA)로 VocalTuner를 넣습니다.
+
+지우기: 설정 → 앱 → VocalTuner → 제거
