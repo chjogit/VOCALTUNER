@@ -7,20 +7,23 @@
 #include <vector>
 #include "BlockParser.h"
 #include "BlockTransforms.h"
+#include "FloatingToolbar.h"
 #include "PitchBalancePanel.h"
 #include "RollViewport.h"
 #include "ToolIcons.h"
 #include "TrackTypes.h"
 #include "VocalFeatures.h"
 
-// 위에서부터: 타임라인(눈금자) / 모드·도구 메뉴 / 피아노롤.
+// 위에서부터: 타임라인(눈금자) / 피아노롤. 모드·도구는 떠 있는 도구 막대(⋮⋮로 이동, 핀으로 위에 붙임, 아이콘 + 툴팁),
+// 지금 도구의 설명은 오른쪽 아래 상자.
 // 타임라인: 클릭 = 재생 위치 이동(호스트 연동), 드래그 = 좌우 이동 (위로 끌면 확대, 아래로 끌면 축소), 휠 = 확대/축소
 // 왼쪽 음 눈금: 드래그 = 상하 이동, 휠 = 세로 확대/축소
 // 피아노롤: 휠 = 가로 확대, Ctrl+휠 = 세로, Alt+Shift+휠 = 커서 기준 가로·세로, Shift+휠 = 좌우 이동,
 //          Alt+드래그 또는 휠 클릭 드래그 = 화면 이동, 더블클릭(빈 곳) = 전체 맞춤
 // 블롭/곡선/핸들을 끄는 도중 Ctrl을 누르면 미세 조정 (움직임 1/10, 반음 스냅 없음)
 //
-// 모드: Ctrl+1 블롭 / Ctrl+2 박자 / Ctrl+3 곡선 (또는 버튼). 숫자 키 1~6은 현재 모드의 도구를 고른다.
+// 모드: Ctrl+1 블록 / Ctrl+2 곡선 / Ctrl+3 박자 (또는 모드 버튼 메뉴). 숫자 키 1~6은 현재 모드의 도구를 고른다.
+// 되돌리기 Ctrl+Z / 다시 Ctrl+Shift+Z (다중 선택 중 불가), 블록 우클릭 = 한 단계 / 처음으로 되돌리기, 블록을 누르는 동안 미리 듣기
 // Ctrl+4 (또는 '음정 균형' 버튼): 중심 음정 / 음정 흐름 / 조 패널
 //  블롭: 이동(상하 = 음정, 더블클릭 = 음정 가운데로 정렬, 블롭 사이 선 = 이음 정도.
 //             이미 선택된 블롭은 좌우로 끌면 타이밍 이동, 양 끝을 끌면 길이) / 자르기·붙이기 / 볼륨
@@ -49,6 +52,7 @@ public:
         Content content;
         TrackView view = TrackView::Visible;
         int colourIndex = 0;
+        int referenceSlot = 0;      // 기준 트랙이면 1 네이비 / 2 베이지로 그린다
     };
 
     enum class Mode { Blob, Curve, Rhythm };      // Ctrl+1 / Ctrl+2 / Ctrl+3 순서
@@ -61,9 +65,9 @@ public:
     std::function<void()> onEditGestureBegin;                                 // 편집 시작 (되돌리기 지점)
     std::function<void(const std::vector<BlockUpdate>&)> onBlocksEdited;      // 드래그 중 계속 호출
     std::function<void()> onUndo, onRedo;
-    std::function<void(const std::vector<size_t>& indices, bool toFirst)> onRevertRequested;
+    std::function<void(const std::vector<size_t>& indices, bool toFirst)> onRevertRequested;   // 우클릭: 처음으로 / 한 단계
     std::function<void(size_t index)> onPreviewStart;                        // 블록을 누르는 동안 미리 듣기
-    std::function<void()> onPreviewStop;   // 우클릭: 처음으로 / 한 단계
+    std::function<void()> onPreviewStop;
     std::function<void(const void* layerId)> onLayerPicked;                  // 다른 편집 가능 트랙의 블롭 클릭
 
     PianoRollView();
@@ -122,7 +126,7 @@ private:
 
     static constexpr int gutterWidth = 40;
     static constexpr int rulerHeight = 24;
-    static constexpr int toolbarHeight = 30;
+    static constexpr int toolbarHeight = 42;     // 도구 막대를 위에 붙였을 때 차지하는 줄
     static constexpr double jointTolerancePixels = 6.0;
     static constexpr float edgeHandlePixels = 7.0f;
     static constexpr float curveHandleRadius = 5.5f;
@@ -167,9 +171,14 @@ private:
     void setSelection(std::vector<size_t>);
     void selectAll();
     std::optional<size_t> singleSelection() const { return selection.size() == 1 ? std::optional<size_t>(selection.front()) : std::nullopt; }
+    int toolbarSpace() const noexcept { return toolbar.isDocked() ? toolbarHeight : 0; }
+    void placeToolbar();
+    void moveToolbar(juce::Point<int> topLeft);
+    void dropToolbar();
+    void dockToolbar(bool);
     juce::Rectangle<int> plotBounds() const
     {
-        return getLocalBounds().withTrimmedLeft(gutterWidth).withTrimmedTop(rulerHeight + toolbarHeight);
+        return getLocalBounds().withTrimmedLeft(gutterWidth).withTrimmedTop(rulerHeight + toolbarSpace());
     }
     juce::Point<float> toPlot(juce::Point<float> p) const { return p - plotBounds().getPosition().toFloat(); }
 
@@ -203,7 +212,9 @@ private:
     void drawPitchGrid(juce::Graphics&) const;
     void drawTimeGrid(juce::Graphics&) const;
     void drawRuler(juce::Graphics&) const;
-    void drawToolbarHint(juce::Graphics&) const;
+    void drawToolbarStrip(juce::Graphics&) const;
+    const char* hintText() const;
+    void drawHintBox(juce::Graphics&) const;
     void drawBackdropLayers(juce::Graphics&) const;
     void drawBlocks(juce::Graphics&) const;
     juce::Rectangle<int> regionClipRect() const;
@@ -238,20 +249,23 @@ private:
     std::vector<Layer> layers;
     mutable bool paintingBackdrop = false;
     mutable int backdropColourIndex = 0;
+    mutable int backdropReferenceSlot = 0;
     mutable float backdropSaturation = 1.0f;
     RollViewport viewport;
     RollViewport dragOrigin;
     Drag drag;
 
-    juce::TextButton modeButton;                     // 활성 모드 이름만 표시, 누르면 모드 메뉴
+    FloatingToolbar toolbar;
+    std::optional<juce::Point<int>> toolbarPosition;  // 떠 있을 때 사용자가 옮긴 자리
+    IconTextButton modeButton;                       // 활성 모드 이름만 표시, 누르면 모드 메뉴
     std::array<IconTextButton, 4> toolButtons;       // 블롭: 이동 / 자르기 / 볼륨 / 곡선 도구(▾)
     IconTextButton undoButton { juce::String::fromUTF8("되돌리기") };
     IconTextButton redoButton { juce::String::fromUTF8("다시") };
     IconTextButton balanceButton { juce::String::fromUTF8("음정 균형") };
     PitchBalancePanel balancePanel;
-    PitchScale lastScale;
+    PitchScale lastScale;                   // 패널을 다시 열 때 마지막 조를 유지
     bool canUndo = false, canRedo = false;
-    bool previewing = false;                   // 패널을 다시 열 때 마지막 조를 유지
+    bool previewing = false;
 
     Mode mode = Mode::Blob;
     BlobTool blobTool = BlobTool::Move;

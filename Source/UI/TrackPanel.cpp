@@ -6,17 +6,6 @@ namespace
 {
 juce::String u8(const char* text) { return juce::String::fromUTF8(text); }
 
-const char* viewName(TrackView view)
-{
-    switch (view)
-    {
-        case TrackView::Editable: return "편집";
-        case TrackView::Visible:  return "보기";
-        case TrackView::Hidden:   return "숨김";
-    }
-    return "";
-}
-
 TrackView nextView(TrackView view)
 {
     switch (view)
@@ -37,23 +26,11 @@ TrackPanel::TrackPanel()
         button.setWantsKeyboardFocus(false);
         button.setMouseClickGrabsKeyboardFocus(false);
         button.setMouseCursor(juce::MouseCursor::PointingHandCursor);
-        button.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2c2e35));
-        button.setColour(juce::TextButton::buttonOnColourId, rollstyle::voicedFill);
-        button.setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.8f));
-        button.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
         addAndMakeVisible(button);
     };
 
     setWantsKeyboardFocus(false);
     setMouseClickGrabsKeyboardFocus(false);
-
-    style(alignmentButton, true);
-    alignmentButton.setButtonText(u8("레퍼런스 정렬 켜기"));
-    alignmentButton.onClick = [this]
-    {
-        if (onAlignmentToggled)
-            onAlignmentToggled(alignmentButton.getToggleState());
-    };
 
     style(timingToggle, true);
     style(pitchToggle, true);
@@ -79,19 +56,17 @@ TrackPanel::TrackPanel()
     fitButton.onClick = [this] { if (onFitRequested) onFitRequested(); };
     fitAllButton.onClick = [this] { if (onFitAllRequested) onFitAllRequested(); };
 
-    const char* const names[] = { "박자 정도", "음정 정도", "이음 정도" };
+    const char* const names[] = { "박자", "음정", "이음" };
     for (size_t i = 0; i < sliders.size(); ++i)
     {
         auto& s = sliders[i];
         s.label = u8(names[i]);
         s.slider.setSliderStyle(juce::Slider::LinearHorizontal);
-        s.slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 44, 18);
+        s.slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 34, 18);
         s.slider.setRange(0.0, 100.0, 1.0);
-        s.slider.setTextValueSuffix("%");
         s.slider.setTextBoxIsEditable(false);   // 글자 입력으로 키보드 포커스를 잡지 않음
         s.slider.setWantsKeyboardFocus(false);
         s.slider.setMouseClickGrabsKeyboardFocus(false);
-        s.slider.getValueObject();
         s.slider.onDragStart = [this] { if (onRolesGestureBegin) onRolesGestureBegin(); };
         s.slider.onValueChange = [this]
         {
@@ -108,12 +83,27 @@ TrackPanel::TrackPanel()
     layoutDetails();
 }
 
+void TrackPanel::setCollapsed(bool shouldCollapse)
+{
+    if (collapsed == shouldCollapse)
+        return;
+    collapsed = shouldCollapse;
+    layoutDetails();
+    repaint();
+}
+
+void TrackPanel::setSettingsOpen(bool open)
+{
+    settingsOpen = open;
+    repaint(settingsRowBounds());
+}
+
 void TrackPanel::setRows(std::vector<Row> newRows)
 {
     const auto same = newRows.size() == rows.size()
                    && std::equal(newRows.begin(), newRows.end(), rows.begin(), [](const Row& a, const Row& b)
-                      { return a.id == b.id && a.name == b.name && a.view == b.view && a.isReference == b.isReference && a.isActive == b.isActive
-                               && a.baseCorrection == b.baseCorrection; });
+                      { return a.id == b.id && a.name == b.name && a.detail == b.detail && a.view == b.view
+                               && a.referenceSlot == b.referenceSlot && a.isActive == b.isActive && a.baseCorrection == b.baseCorrection; });
     if (same)
         return;
     rows = std::move(newRows);
@@ -127,8 +117,6 @@ void TrackPanel::setAlignmentStatus(bool active, const juce::String& newStatus)
         return;
     alignmentActive = active;
     status = newStatus;
-    alignmentButton.setToggleState(active, juce::dontSendNotification);
-    alignmentButton.setButtonText(u8(active ? "레퍼런스 정렬 끄기" : "레퍼런스 정렬 켜기"));
     layoutDetails();
     repaint();
 }
@@ -140,10 +128,9 @@ void TrackPanel::setFitProgress(double progress, const juce::String& stage)
         return;
     fitProgress = running ? juce::jlimit(0.0, 1.0, progress) : -1.0;
     fitStage = stage;
-    cancelButton.setVisible(running);
     fitButton.setEnabled(! running);
     fitAllButton.setEnabled(! running);
-    resized();
+    layoutDetails();
     repaint(statusArea());
 }
 
@@ -187,41 +174,63 @@ void TrackPanel::notifyRoles()
 
 juce::Rectangle<int> TrackPanel::rowBounds(size_t index) const
 {
-    return { 0, headerHeight + static_cast<int>(index) * rowHeight, getWidth(), rowHeight };
+    return { 0, headerHeight + static_cast<int>(index) * rowHeight, getWidth() - collapsedWidth, rowHeight };
 }
-juce::Rectangle<int> TrackPanel::viewBox(size_t index) const { return rowBounds(index).withWidth(44).reduced(4, 3); }
-juce::Rectangle<int> TrackPanel::referenceBox(size_t index) const { return rowBounds(index).removeFromRight(44).reduced(4, 3); }
+int TrackPanel::rowsBottom() const noexcept { return headerHeight + static_cast<int>(rows.size()) * rowHeight; }
+juce::Rectangle<int> TrackPanel::referenceBox(size_t index) const
+{
+    const auto r = rowBounds(index);
+    return { r.getRight() - 46, r.getCentreY() - 10, 38, 20 };
+}
 juce::Rectangle<int> TrackPanel::correctionBox(size_t index) const
 {
-    return rowBounds(index).removeFromRight(alignmentActive ? 88 : 44).removeFromLeft(44).reduced(4, 3);
+    return referenceBox(index).translated(alignmentActive ? -41 : 0, 0);
 }
-juce::Rectangle<int> TrackPanel::statusArea() const { return { 8, headerHeight - 26, getWidth() - 16, 20 }; }
+juce::Rectangle<int> TrackPanel::detailText(size_t index) const
+{
+    const auto r = rowBounds(index);
+    return { 14, r.getCentreY() + 1, correctionBox(index).getX() - 18, 15 };
+}
+juce::Rectangle<int> TrackPanel::collapseTab() const { return { getWidth() - collapsedWidth, 58, collapsedWidth, 42 }; }
+juce::Rectangle<int> TrackPanel::guideRowBounds() const
+{
+    return { 0, getHeight() - footerRowHeight, getWidth() - collapsedWidth, footerRowHeight };
+}
+juce::Rectangle<int> TrackPanel::settingsRowBounds() const { return guideRowBounds().translated(0, -footerRowHeight); }
+juce::Rectangle<int> TrackPanel::statusArea() const
+{
+    return settingsRowBounds().withHeight(22).translated(0, -30).reduced(16, 0);
+}
 
 void TrackPanel::layoutDetails()
 {
-    const auto visible = alignmentActive && rolesEditable;
+    const auto visible = ! collapsed && alignmentActive && rolesEditable;
     for (juce::Component* c : std::initializer_list<juce::Component*>{ &timingToggle, &pitchToggle, &relationButton, &fitButton, &fitAllButton,
-                                &sliders[0].slider, &sliders[1].slider, &sliders[2].slider })
+                                &cancelButton, &sliders[0].slider, &sliders[1].slider, &sliders[2].slider })
         c->setVisible(false);
     detailsArea = {};
+    if (collapsed)
+        return repaint();
 
-    auto area = getLocalBounds().withTrimmedTop(headerHeight + static_cast<int>(rows.size()) * rowHeight + 8).reduced(8, 0);
+    const auto running = fitProgress >= 0.0;
+    cancelButton.setVisible(running);
+    cancelButton.setBounds(statusArea().removeFromRight(40));
     fitAllButton.setVisible(alignmentActive);
-    if (alignmentActive)
-        fitAllButton.setBounds(getLocalBounds().withTop(getHeight() - 30).reduced(8, 4));
+    fitAllButton.setBounds(statusArea().translated(0, -34).withHeight(28));
 
     if (! visible)
-        return;
+        return repaint();
 
-    detailsArea = area.withHeight(150);
+    // 역할: 위쪽 틈을 넉넉히 (트랙 목록과 성격이 다름), 슬라이더 사이는 촘촘히
+    detailsArea = juce::Rectangle<int>(16, rowsBottom() + 20, getWidth() - collapsedWidth - 30, 170);
     auto r = detailsArea.withTrimmedTop(22);
     auto buttons = r.removeFromTop(24);
-    timingToggle.setBounds(buttons.removeFromLeft(48));
-    buttons.removeFromLeft(4);
-    pitchToggle.setBounds(buttons.removeFromLeft(48));
-    buttons.removeFromLeft(4);
+    timingToggle.setBounds(buttons.removeFromLeft(44));
+    buttons.removeFromLeft(3);
+    pitchToggle.setBounds(buttons.removeFromLeft(44));
+    buttons.removeFromLeft(3);
     relationButton.setBounds(buttons);
-    r.removeFromTop(6);
+    r.removeFromTop(8);
 
     const bool show[] = { roles.timing, roles.pitch, roles.pitch };
     for (size_t i = 0; i < sliders.size(); ++i)
@@ -229,146 +238,90 @@ void TrackPanel::layoutDetails()
         if (! show[i])
             continue;
         auto line = r.removeFromTop(24);
-        line.removeFromLeft(58);
+        line.removeFromLeft(40);
         sliders[i].slider.setBounds(line);
         sliders[i].slider.setVisible(true);
     }
     timingToggle.setVisible(true);
     pitchToggle.setVisible(true);
     relationButton.setVisible(roles.pitch);
-    if (! roles.pitch)
-        relationButton.setBounds({});
-    fitButton.setBounds(r.removeFromTop(26).withTrimmedTop(2));
+    fitButton.setBounds(r.removeFromTop(40).withTrimmedTop(10));
     fitButton.setVisible(roles.timing || roles.pitch);
     repaint();      // 슬라이더 이름표는 paint에서 슬라이더 위치에 맞춰 그리므로 배치가 바뀌면 다시 그린다
 }
 
 void TrackPanel::resized()
 {
-    alignmentButton.setBounds(getLocalBounds().removeFromTop(headerHeight).withTrimmedBottom(26).reduced(8, 6));
-    cancelButton.setBounds(statusArea().removeFromRight(44));
     layoutDetails();
 }
 
-// ------------------------------------------------------------------ 그리기 / 클릭
-
-void TrackPanel::paint(juce::Graphics& g)
-{
-    g.fillAll(juce::Colour(0xff202228));
-    g.setColour(juce::Colours::black.withAlpha(0.5f));
-    g.drawVerticalLine(getWidth() - 1, 0.0f, static_cast<float>(getHeight()));
-
-    paintStatus(g);
-
-    g.setFont(13.0f);
-    for (size_t i = 0; i < rows.size(); ++i)
-    {
-        const auto& row = rows[i];
-        const auto bounds = rowBounds(i);
-        if (row.isActive)
-        {
-            g.setColour(juce::Colour(0xff2f3a52));
-            g.fillRect(bounds);
-        }
-
-        const auto alpha = row.view == TrackView::Hidden ? 0.35f : (row.view == TrackView::Visible ? 0.6f : 1.0f);
-        const auto box = viewBox(i).toFloat();
-        g.setColour(row.view == TrackView::Editable ? rollstyle::voicedFill : juce::Colour(0xff3a3d47));
-        g.fillRoundedRectangle(box, 3.0f);
-        g.setColour(juce::Colours::white.withAlpha(0.9f));
-        g.setFont(11.0f);
-        g.drawText(u8(viewName(row.view)), box.toNearestInt(), juce::Justification::centred, false);
-
-        g.setFont(13.0f);
-        g.setColour(juce::Colours::white.withAlpha(alpha));
-        g.drawText(row.name, bounds.withTrimmedLeft(50).withTrimmedRight(alignmentActive ? 92 : 48), juce::Justification::centredLeft, true);
-
-        const auto fix = correctionBox(i).toFloat();
-        g.setColour(row.baseCorrection ? rollstyle::voicedFill.withAlpha(0.8f) : juce::Colour(0xff3a3d47));
-        g.fillRoundedRectangle(fix, 3.0f);
-        g.setColour(juce::Colours::white.withAlpha(row.baseCorrection ? 0.95f : 0.5f));
-        g.setFont(11.0f);
-        g.drawText(u8("보정"), fix.toNearestInt(), juce::Justification::centred, false);
-
-        if (alignmentActive)
-        {
-            const auto refBox = referenceBox(i).toFloat();
-            g.setColour(row.isReference ? rollstyle::accent : juce::Colour(0xff3a3d47));
-            g.fillRoundedRectangle(refBox, 3.0f);
-            g.setColour(row.isReference ? juce::Colour(0xff10301c) : juce::Colours::white.withAlpha(0.7f));
-            g.setFont(11.0f);
-            g.drawText(u8("기준"), refBox.toNearestInt(), juce::Justification::centred, false);
-        }
-    }
-
-    if (alignmentActive && rolesEditable)
-    {
-        g.setColour(juce::Colours::white.withAlpha(0.75f));
-        g.setFont(12.0f);
-        g.drawText(u8("기준: ") + referenceName + u8("에 맞춤"), detailsArea.withHeight(20), juce::Justification::centredLeft, true);
-        g.setFont(11.5f);
-        g.setColour(juce::Colours::white.withAlpha(0.6f));
-        const juce::String names[] = { sliders[0].label, sliders[1].label, sliders[2].label };
-        for (size_t i = 0; i < sliders.size(); ++i)
-            if (sliders[i].slider.isVisible())
-                g.drawText(names[i], sliders[i].slider.getBounds().withLeft(detailsArea.getX()).withWidth(58), juce::Justification::centredLeft, false);
-    }
-    else if (alignmentActive)
-    {
-        g.setColour(juce::Colours::white.withAlpha(0.5f));
-        g.setFont(12.0f);
-        g.drawFittedText(u8(rows.empty() ? "트랙이 없습니다" : "‘기준’을 눌러 레퍼런스 트랙을 정하고, 다른 트랙을 눌러 역할(박자/음정)을 설정하세요"),
-                         getLocalBounds().withTrimmedTop(headerHeight + static_cast<int>(rows.size()) * rowHeight + 8).reduced(10, 0).withHeight(60),
-                         juce::Justification::topLeft, 4);
-    }
-}
+// ------------------------------------------------------------------ 클릭 / 안내
 
 void TrackPanel::mouseDown(const juce::MouseEvent& e)
 {
     const auto p = e.getPosition();
-    for (size_t i = 0; i < rows.size(); ++i)
+    if (collapseTab().contains(p) || collapsed)
     {
-        if (! rowBounds(i).contains(p))
-            continue;
-        const auto& row = rows[i];
-        if (viewBox(i).contains(p))
-        {
-            if (onViewChanged)
-                onViewChanged(row.id, nextView(row.view));
-        }
-        else if (correctionBox(i).contains(p))
-        {
-            if (onBaseCorrectionToggled)
-                onBaseCorrectionToggled(row.id, ! row.baseCorrection);
-        }
-        else if (alignmentActive && referenceBox(i).contains(p))
-        {
-            if (onReferenceChosen)
-                onReferenceChosen(row.isReference ? nullptr : row.id);
-        }
-        else if (onActivate)
-            onActivate(row.id);
+        if (onCollapseToggled)
+            onCollapseToggled();
         return;
     }
+    if (settingsRowBounds().contains(p))
+    {
+        if (onSettingsClicked)
+            onSettingsClicked();
+        return;
+    }
+    if (guideRowBounds().contains(p))
+    {
+        if (onAlignmentToggled)
+            onAlignmentToggled(! alignmentActive);
+        return;
+    }
+    for (size_t i = 0; i < rows.size(); ++i)
+        if (rowBounds(i).contains(p))
+            return handleRowClick(i, p);
 }
 
-// 상태줄: 맞추기 중이면 로딩바(+ 취소 버튼), 아니면 상태 글자
-void TrackPanel::paintStatus(juce::Graphics& g)
+void TrackPanel::handleRowClick(size_t i, juce::Point<int> p)
 {
-    const auto area = statusArea();
-    g.setFont(11.5f);
-    if (fitProgress < 0.0)
+    const auto& row = rows[i];
+    if (correctionBox(i).contains(p))
     {
-        g.setColour(juce::Colours::white.withAlpha(0.55f));
-        g.drawText(status.isEmpty() ? u8("꺼짐: 켜면 발음·호흡 분석을 시작합니다") : status, area, juce::Justification::centredLeft, true);
-        return;
+        if (onBaseCorrectionToggled)
+            onBaseCorrectionToggled(row.id, ! row.baseCorrection);
     }
-    const auto bar = area.withTrimmedRight(48).toFloat();
-    g.setColour(juce::Colour(0xff2c2e35));
-    g.fillRoundedRectangle(bar, 3.0f);
-    g.setColour(rollstyle::voicedFill);
-    g.fillRoundedRectangle(bar.withWidth(juce::jmax(6.0f, bar.getWidth() * static_cast<float>(fitProgress))), 3.0f);
-    g.setColour(juce::Colours::white.withAlpha(0.9f));
-    g.drawText(fitStage + juce::String::formatted("  %d%%", juce::roundToInt(fitProgress * 100.0)), bar.toNearestInt().reduced(6, 0),
-               juce::Justification::centredLeft, true);
+    else if (alignmentActive && referenceBox(i).contains(p))
+    {
+        if (onReferenceChosen)
+            onReferenceChosen(row.id, (row.referenceSlot + 1) % 3);
+    }
+    else if (detailText(i).contains(p))
+    {
+        if (onViewChanged)
+            onViewChanged(row.id, nextView(row.view));
+    }
+    else if (onActivate)
+        onActivate(row.id);
+}
+
+juce::String TrackPanel::getTooltip()
+{
+    const auto p = getMouseXYRelative();
+    if (collapseTab().contains(p) || collapsed)
+        return u8(collapsed ? "패널 펼치기" : "패널 접기");
+    if (guideRowBounds().contains(p))
+        return u8("가이드 모드: 기준 트랙의 박자와 음정에 다른 트랙을 맞춥니다. 켜면 발음·호흡 분석을 시작합니다");
+    if (settingsRowBounds().contains(p))
+        return u8("설정: 블록·곡선·배경 색과 글씨 크기");
+    for (size_t i = 0; i < rows.size(); ++i)
+    {
+        if (correctionBox(i).contains(p))
+            return u8("기초 보정: 블록 음정을 가까운 음 쪽으로 5% 옮깁니다");
+        if (alignmentActive && referenceBox(i).contains(p))
+            return u8("기준: 누를 때마다 꺼짐 → 네이비 → 베이지. 다른 트랙은 겹치는 기준에 맞춥니다");
+        if (detailText(i).contains(p))
+            return u8("눌러서 편집 / 보기 / 숨김");
+    }
+    return {};
 }

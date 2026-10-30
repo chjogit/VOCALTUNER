@@ -41,3 +41,15 @@ bool VocalTunerDocumentController::requestHostPlaybackPosition(double songSec)
     host->requestSetPlaybackPosition(std::max(0.0, songSec));
     return true;
 }
+
+bool VocalTunerDocumentController::requestHostPlayback(bool start)
+{
+    auto* host = getDocumentController()->getHostPlaybackController();
+    if (host == nullptr)
+        return false;
+    if (start)
+        host->requestStartPlayback();
+    else
+        host->requestStopPlayback();
+    return true;
+}

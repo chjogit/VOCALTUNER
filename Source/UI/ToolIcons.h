@@ -14,12 +14,20 @@ public:
 
     void setIcon(ToolIcon newIcon);
     ToolIcon getIcon() const noexcept { return icon; }
+    void setIconOnly(bool shouldHideText) { iconOnly = shouldHideText; repaint(); }   // 이름은 툴팁으로
+    void setBoldText(bool shouldBeBold) { boldText = shouldBeBold; repaint(); }
 
     void paintButton(juce::Graphics& g, bool highlighted, bool down) override;
 
 private:
     juce::Colour currentTextColour() const;
 
+    void paintBoldText(juce::Graphics&);
+
     ToolIcon icon = ToolIcon::None;
     juce::Path iconPath;
+    bool iconOnly = false, boldText = false;
 };
+
+// 설정 줄의 톱니바퀴
+void drawGearIcon(juce::Graphics&, juce::Rectangle<float> area);

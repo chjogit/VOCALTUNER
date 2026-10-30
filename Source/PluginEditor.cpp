@@ -9,8 +9,15 @@ VocalTunerAudioProcessorEditor::VocalTunerAudioProcessorEditor(VocalTunerAudioPr
 {
     // 포커스를 잡지 않아야 Space/+/- 가 DAW로 전달됨
     setWantsKeyboardFocus(false);
+    const auto savedTheme = theme::load();
+    theme::apply(savedTheme);
+    lookAndFeel.refreshColours();
+    setLookAndFeel(&lookAndFeel);
     addAndMakeVisible(trackPanel);
     addAndMakeVisible(pianoRoll);
+    settingsPanel.setChoice(savedTheme);
+    settingsPanel.onChanged = [this](const ThemeChoice& choice) { applyTheme(choice); };
+    addChildComponent(settingsPanel);
     wireTrackPanel();
     pianoRoll.onLayerPicked = [this](const void* id) { activeOverride = static_cast<const juce::ARAPlaybackRegion*>(id); refreshTracks(); updatePianoRoll(); };
     pianoRoll.onSeekRequested = [this](double songSec) { seekHostTo(songSec); };
@@ -35,6 +42,7 @@ VocalTunerAudioProcessorEditor::~VocalTunerAudioProcessorEditor()
 {
     stopTimer();
     stopBlockPreview();
+    setLookAndFeel(nullptr);
     if (auto* controller = getDocumentController())
     {
         controller->getAlignment().cancelFit();         // 편집기가 닫히면 진행 중인 맞추기도 멈춘다
@@ -42,26 +50,53 @@ VocalTunerAudioProcessorEditor::~VocalTunerAudioProcessorEditor()
     }
 }
 
+// 위쪽 상태줄: 왼쪽 재생 상태, 오른쪽 분석 상태 (작고 단단하게)
 void VocalTunerAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::Colour(0xff1e1e1e));
-    g.setColour(juce::Colours::white.withAlpha(0.85f));
+    g.fillAll(rollstyle::background);
+    auto bar = getLocalBounds().removeFromTop(statusHeight);
+    g.setColour(juce::Colours::black);
+    g.drawHorizontalLine(bar.getBottom() - 1, 0.0f, static_cast<float>(getWidth()));
+    bar.reduce(12, 0);
+    g.setColour(rollstyle::inkFaint);
+    g.fillRect(bar.removeFromLeft(7).withSizeKeepingCentre(7, 7));
+    bar.removeFromLeft(10);
 
-    auto area = getLocalBounds().reduced(8, 0);
-    g.setFont(13.0f);
-    g.drawFittedText(juce::String(isARAEditorView() ? "VocalTuner (ARA)" : "VocalTuner (non-ARA)")
-                         + "  |  " + formatPlayHead(processor.getPlayHeadSnapshot()),
-                     area.removeFromTop(statusHeight), juce::Justification::centredLeft, 1);
-    g.setFont(12.0f);
-    g.setColour(juce::Colours::white.withAlpha(0.6f));
-    g.drawFittedText(formatAnalysisStatus(), area.removeFromBottom(statusHeight), juce::Justification::centredLeft, 1);
+    const juce::Font mono(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), rollstyle::fontSize(11.0f), juce::Font::plain));
+    g.setFont(mono);
+    g.setColour(rollstyle::inkDim);
+    g.drawText(juce::String(isARAEditorView() ? "ARA" : "non-ARA") + juce::String::fromUTF8("  ·  ") + formatPlayHead(processor.getPlayHeadSnapshot()),
+               bar, juce::Justification::centredLeft, true);
+    g.drawText(formatAnalysisStatus(), bar, juce::Justification::centredRight, true);
 }
 
 void VocalTunerAudioProcessorEditor::resized()
 {
-    auto area = getLocalBounds().withTrimmedTop(statusHeight).withTrimmedBottom(statusHeight);
-    trackPanel.setBounds(area.removeFromLeft(TrackPanel::preferredWidth));
+    auto area = getLocalBounds().withTrimmedTop(statusHeight);
+    trackPanel.setBounds(area.removeFromLeft(trackPanel.preferredWidth()));
     pianoRoll.setBounds(area);
+    const auto row = trackPanel.settingsRowBounds().translated(trackPanel.getX(), trackPanel.getY());
+    settingsPanel.setBounds(trackPanel.getRight() + 8, row.getBottom() - SettingsPanel::preferredHeight,
+                            SettingsPanel::preferredWidth, SettingsPanel::preferredHeight);
+}
+
+void VocalTunerAudioProcessorEditor::toggleSettings()
+{
+    const auto show = ! settingsPanel.isVisible();
+    settingsPanel.setVisible(show);
+    trackPanel.setSettingsOpen(show);
+    if (show)
+        settingsPanel.toFront(false);
+}
+
+// 테마는 모든 화면에 바로 반영하고 사용자 설정 파일에 저장한다
+void VocalTunerAudioProcessorEditor::applyTheme(const ThemeChoice& choice)
+{
+    theme::apply(choice);
+    theme::save(choice);
+    lookAndFeel.refreshColours();
+    sendLookAndFeelChange();
+    repaint();
 }
 
 void VocalTunerAudioProcessorEditor::timerCallback()
@@ -72,6 +107,7 @@ void VocalTunerAudioProcessorEditor::timerCallback()
     refreshTracks();
     updatePianoRoll();
     pianoRoll.pollShortcutKeys();
+    trackProcessing();
     if (const auto* controller = getDocumentController())
         if (auto* source = currentSource())
         {
@@ -83,7 +119,6 @@ void VocalTunerAudioProcessorEditor::timerCallback()
         pendingSeekSec.reset();   // 호스트가 새 위치를 알려옴
     pianoRoll.setPlayhead(pendingSeekSec.value_or(snapshot.timeInSeconds), snapshot.isPlaying);
     repaint(getLocalBounds().withHeight(statusHeight));
-    repaint(getLocalBounds().removeFromBottom(statusHeight));
 }
 
 // 이 인스턴스(Event FX)가 붙은 클립을 우선, 없으면 호스트에서 선택한 클립
@@ -382,15 +417,39 @@ juce::String VocalTunerAudioProcessorEditor::trackLabel(const juce::ARAPlaybackR
     return regionLabel(region);
 }
 
-juce::String VocalTunerAudioProcessorEditor::referenceLabel() const
+// 따라가는 기준의 색 이름 + 트랙 이름 (예: "네이비 기준 audio [vocals]")
+juce::String VocalTunerAudioProcessorEditor::referenceLabel(const juce::ARAPlaybackRegion* target) const
+{
+    const auto* controller = getDocumentController();
+    if (controller == nullptr || target == nullptr)
+        return {};
+    const auto* reference = controller->getAlignment().referenceFor(target);
+    if (reference == nullptr)
+        return {};
+    const auto slot = controller->getAlignment().referenceSlot(reference);
+    return juce::String::fromUTF8(slot == 2 ? "베이지 기준 " : "네이비 기준 ") + trackLabel(reference);
+}
+
+// 트랙 줄의 둘째 줄: 기준이면 색, 따라가는 트랙이면 맞추는 기준, 아니면 표시 상태. 클립이 여럿이면 개수
+juce::String VocalTunerAudioProcessorEditor::rowDetail(const juce::ARAPlaybackRegion* region, int clipCount) const
 {
     const auto* controller = getDocumentController();
     if (controller == nullptr)
         return {};
-    for (const auto* region : liveRegions)
-        if (controller->getAlignment().isReference(region))
-            return trackLabel(region);
-    return {};
+    const auto& alignment = controller->getAlignment();
+    juce::String text;
+    if (const auto slot = alignment.referenceSlot(region); slot > 0)
+        text = juce::String::fromUTF8(slot == 1 ? "네이비 기준" : "베이지 기준");
+    else if (controller->getAnalysis().isAlignmentActive() && alignment.hasBaseline(region))
+        text = juce::String::fromUTF8(alignment.referenceSlot(alignment.referenceFor(region)) == 2 ? "베이지 기준에 맞춤" : "네이비 기준에 맞춤");
+    else
+    {
+        const auto view = const_cast<AlignmentController&>(alignment).settings(region).view;
+        text = juce::String::fromUTF8(view == TrackView::Editable ? "편집" : (view == TrackView::Visible ? "보기만" : "숨김"));
+    }
+    if (clipCount > 1)
+        text << juce::String::fromUTF8(" · 클립 ") << clipCount;
+    return text;
 }
 
 // 문서의 모든 재생 영역 (트랙 순서, 시작 시각 순)
@@ -477,12 +536,11 @@ void VocalTunerAudioProcessorEditor::pushTrackPanel(const std::vector<const juce
         }
         keys.push_back(key);
         clipCounts.push_back(1);
-        rows.push_back({ region, trackLabel(region), alignment.settings(region).view, alignment.isReference(region),
+        rows.push_back({ region, trackLabel(region), {}, alignment.settings(region).view, alignment.referenceSlot(region),
                          AlignmentController::trackOf(active) == key, alignment.settings(region).baseCorrection });
     }
     for (size_t i = 0; i < rows.size(); ++i)
-        if (clipCounts[i] > 1)
-            rows[i].name << juce::String::fromUTF8("  (클립 ") << clipCounts[i] << ")";
+        rows[i].detail = rowDetail(static_cast<const juce::ARAPlaybackRegion*>(rows[i].id), clipCounts[i]);
     trackPanel.setRows(std::move(rows));
 
     const auto& analysis = controller->getAnalysis();
@@ -499,7 +557,7 @@ void VocalTunerAudioProcessorEditor::pushTrackPanel(const std::vector<const juce
     trackPanel.setAlignmentStatus(on, on ? status : juce::String());
 
     const auto canEdit = on && active != nullptr && alignment.hasReference() && ! alignment.isReference(active);
-    trackPanel.setActiveRoles(active != nullptr ? alignment.settings(active).roles : TrackRoles(), canEdit, referenceLabel());
+    trackPanel.setActiveRoles(active != nullptr ? alignment.settings(active).roles : TrackRoles(), canEdit, referenceLabel(active));
 }
 
 // 편집 중인 트랙을 뺀 다른 트랙을 피아노롤 뒤에 겹쳐 그린다
@@ -526,12 +584,14 @@ void VocalTunerAudioProcessorEditor::pushLayers(const std::vector<const juce::AR
         key.push_back(features.get());
         key.push_back(blocks.get());
         key.push_back(reinterpret_cast<const void*>(static_cast<intptr_t>(view)));
+        key.push_back(reinterpret_cast<const void*>(static_cast<intptr_t>(alignment.referenceSlot(region))));
         key.push_back(reinterpret_cast<const void*>(static_cast<intptr_t>(std::llround(region->getStartInPlaybackTime() * 1000.0))));
 
         PianoRollView::Layer layer;
         layer.id = region;
         layer.view = view;
         layer.colourIndex = colour;
+        layer.referenceSlot = alignment.referenceSlot(region);
         layer.content.features = std::move(features);
         layer.content.blocks = std::move(blocks);
         layer.content.offsetSec = AlignmentController::offsetOf(region);
@@ -567,16 +627,24 @@ void VocalTunerAudioProcessorEditor::wireTrackPanel()
         refreshTracks();
         updatePianoRoll();
     };
-    trackPanel.onReferenceChosen = [this, asRegion](const void* id)
+    trackPanel.onReferenceChosen = [this, asRegion](const void* id, int slot)
     {
         if (auto* controller = getDocumentController())
         {
-            controller->getAlignment().setReference(asRegion(id));
-            if (id != nullptr)
+            controller->getAlignment().setReferenceSlot(asRegion(id), slot);
+            if (slot > 0)
                 setBaseCorrection(asRegion(id), false);     // 기준 트랙은 원래 음정 그대로 쓴다
         }
         alignmentMessage.clear();
         refreshTracks();
+    };
+    trackPanel.onSettingsClicked = [this] { toggleSettings(); };
+    trackPanel.onCollapseToggled = [this]
+    {
+        trackPanel.setCollapsed(! trackPanel.isCollapsed());
+        if (trackPanel.isCollapsed() && settingsPanel.isVisible())
+            toggleSettings();
+        resized();
     };
     trackPanel.onAlignmentToggled = [this](bool on)
     {

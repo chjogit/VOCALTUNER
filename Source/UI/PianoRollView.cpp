@@ -15,14 +15,16 @@ PianoRollView::PianoRollView()
         button.setWantsKeyboardFocus(false);
         button.setMouseClickGrabsKeyboardFocus(false);
         button.setMouseCursor(juce::MouseCursor::PointingHandCursor);
-        button.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2c2e35));
-        button.setColour(juce::TextButton::buttonOnColourId, rollstyle::voicedFill);
-        button.setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.8f));
-        button.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
-        addAndMakeVisible(button);
+        button.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        button.getProperties().set("flat", true);
+        if (auto* icon = dynamic_cast<IconTextButton*>(&button))
+            icon->setIconOnly(true);
+        toolbar.addAndMakeVisible(button);
     };
 
     style(modeButton, false, 0);
+    modeButton.setBoldText(true);
+    modeButton.setIconOnly(false);
     modeButton.onClick = [this] { showModeMenu(); };
     for (size_t i = 0; i < toolButtons.size(); ++i)
     {
@@ -38,10 +40,18 @@ PianoRollView::PianoRollView()
     redoButton.setIcon(ToolIcon::Redo);
     undoButton.setEnabled(false);
     redoButton.setEnabled(false);
+    undoButton.setTooltip(juce::String::fromUTF8("되돌리기  Ctrl+Z"));
+    redoButton.setTooltip(juce::String::fromUTF8("다시  Ctrl+Shift+Z"));
 
     style(balanceButton, false, 0);
     balanceButton.setIcon(ToolIcon::Balance);
     balanceButton.onClick = [this] { toggleBalancePanel(); };
+    balanceButton.setTooltip(juce::String::fromUTF8("음정 균형  Ctrl+4"));
+    modeButton.setTooltip(juce::String::fromUTF8("모드  Ctrl+1 블록 / Ctrl+2 곡선 / Ctrl+3 박자"));
+    toolbar.onMoved = [this](juce::Point<int> topLeft) { moveToolbar(topLeft); };
+    toolbar.onDropped = [this] { dropToolbar(); };
+    toolbar.onPinClicked = [this] { dockToolbar(! toolbar.isDocked()); };
+    addAndMakeVisible(toolbar);
     balancePanel.onGestureBegin = [this] { if (onEditGestureBegin) onEditGestureBegin(); };
     balancePanel.onChanged = [this](const PitchBalance& b) { applyBalance(b); };
     balancePanel.onClosed = [this] { toggleBalancePanel(); };
@@ -163,6 +173,7 @@ void PianoRollView::syncToolbar()
         toolButtons[i].setVisible(visible);
         toolButtons[i].setButtonText(juce::String::fromUTF8(mode == Mode::Curve ? curveNames[i] : blobNames[i]));
         toolButtons[i].setIcon(mode == Mode::Curve ? curveIcons[i] : blobIcons[i]);
+        toolButtons[i].setTooltip(toolButtons[i].getButtonText() + "  " + juce::String(i + 1));
         bool active = false;
         if (mode == Mode::Curve)
             active = static_cast<size_t>(curveTool) == i;
@@ -290,7 +301,7 @@ PianoRollView::Zone PianoRollView::zoneAt(juce::Point<float> p) const
         return Zone::Plot;
     if (point.y < rulerHeight)
         return point.x >= gutterWidth ? Zone::Ruler : Zone::None;
-    if (point.y >= rulerHeight + toolbarHeight && point.x < gutterWidth)
+    if (point.y >= rulerHeight + toolbarSpace() && point.x < gutterWidth)
         return Zone::Gutter;
     return Zone::None;
 }
@@ -378,30 +389,61 @@ void PianoRollView::setPlayhead(double songSec, bool isPlaying)
 
 void PianoRollView::resized()
 {
-    auto toolbar = getLocalBounds().withTrimmedTop(rulerHeight).removeFromTop(toolbarHeight).reduced(6, 3);
-    const auto place = [&toolbar](juce::Component& c, int width)
-    {
-        c.setBounds(toolbar.removeFromLeft(width));
-        toolbar.removeFromLeft(4);
-    };
-
-    place(modeButton, 70);          // 1: 활성 모드
-    toolbar.removeFromLeft(14);     // 2: 그 모드의 도구들
-    static constexpr int widths[] = { 72, 82, 72, 120 };   // 아이콘 + 이름
+    std::vector<FloatingToolbar::Item> items { { &modeButton, 76, false } };
     for (size_t i = 0; i < toolButtons.size(); ++i)
-        if (toolButtons[i].isVisible())
-            place(toolButtons[i], widths[i]);
-    toolbar.removeFromLeft(10);
-    place(undoButton, 96);
-    place(redoButton, 66);
-    toolbar.removeFromLeft(10);
-    place(balanceButton, 104);
+        items.push_back({ &toolButtons[i], 34, i == 0 });
+    items.push_back({ &undoButton, 34, true });
+    items.push_back({ &redoButton, 34, false });
+    items.push_back({ &balanceButton, 34, true });
+    toolbar.setItems(std::move(items));
+    placeToolbar();
+
     const auto plot = plotBounds();
     balancePanel.setBounds(plot.getRight() - PitchBalancePanel::preferredWidth - 8, plot.getY() + 8,
                            PitchBalancePanel::preferredWidth, PitchBalancePanel::preferredHeight);
 
     viewport.width = std::max(1, plotBounds().getWidth());
     viewport.height = std::max(1, plotBounds().getHeight());
+}
+
+// ------------------------------------------------------------------ 떠 있는 도구 막대
+
+// 붙어 있으면 눈금자 아래 줄의 왼쪽, 떠 있으면 마지막 위치 (처음에는 피아노롤 가운데 위)
+void PianoRollView::placeToolbar()
+{
+    const auto width = toolbar.preferredWidth();
+    const auto height = FloatingToolbar::barHeight + FloatingToolbar::shadow;
+    const auto plot = plotBounds();
+    if (toolbar.isDocked())
+        return toolbar.setBounds(gutterWidth + 6, rulerHeight + 2, width, height);
+
+    const auto fallback = juce::Point<int>(plot.getCentreX() - width / 2, plot.getY() + 12);
+    auto topLeft = toolbarPosition.value_or(fallback);
+    topLeft.x = juce::jlimit(plot.getX(), std::max(plot.getX(), plot.getRight() - width), topLeft.x);
+    topLeft.y = juce::jlimit(plot.getY(), std::max(plot.getY(), plot.getBottom() - height), topLeft.y);
+    toolbar.setBounds(topLeft.x, topLeft.y, width, height);
+}
+
+void PianoRollView::moveToolbar(juce::Point<int> topLeft)
+{
+    toolbarPosition = topLeft;
+    placeToolbar();
+}
+
+// 위쪽 가장자리 가까이 놓으면 붙는다
+void PianoRollView::dropToolbar()
+{
+    if (toolbar.getY() <= plotBounds().getY() + 4)
+        dockToolbar(true);
+}
+
+void PianoRollView::dockToolbar(bool dock)
+{
+    toolbar.setDocked(dock);
+    if (! dock && toolbarPosition && toolbarPosition->y <= rulerHeight + toolbarHeight + 4)
+        toolbarPosition.reset();    // 떼어 내면 처음 자리로
+    resized();
+    repaint();
 }
 
 double PianoRollView::blockCentreMidi(const VocalBlock& block) const
@@ -441,7 +483,7 @@ void PianoRollView::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseW
     const auto factor = std::exp(delta * 1.2);
     const auto zone = zoneAt(e.position);
     const auto anchorX = e.position.x - gutterWidth;
-    const auto anchorY = e.position.y - rulerHeight - toolbarHeight;
+    const auto anchorY = e.position.y - rulerHeight - toolbarSpace();
 
     if (zone == Zone::Gutter)
         viewport.zoomPitchAt(anchorY, factor);

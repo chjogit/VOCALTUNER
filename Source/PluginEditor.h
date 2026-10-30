@@ -5,11 +5,13 @@
 #include <memory>
 #include <optional>
 #include "UI/PianoRollView.h"
+#include "UI/SettingsPanel.h"
+#include "UI/SharpLookAndFeel.h"
 #include "UI/TrackPanel.h"
 
 class VocalTunerDocumentController;
 
-constexpr int statusHeight = 26;
+constexpr int statusHeight = 24;
 
 class VocalTunerAudioProcessorEditor : public juce::AudioProcessorEditor,
                                        public juce::AudioProcessorEditorARAExtension,
@@ -38,7 +40,10 @@ private:
     void applyBaseCorrection(juce::ARAAudioSource*, bool on, bool undoable);
     static juce::String regionLabel(const juce::ARAPlaybackRegion*);
     static juce::String trackLabel(const juce::ARAPlaybackRegion*);
-    juce::String referenceLabel() const;
+    juce::String referenceLabel(const juce::ARAPlaybackRegion* target) const;
+    juce::String rowDetail(const juce::ARAPlaybackRegion*, int clipCount) const;
+    void toggleSettings();
+    void applyTheme(const ThemeChoice&);
     PianoRollView::Content makeContent(const juce::ARAPlaybackRegion*) const;
     const VocalTunerDocumentController* getDocumentController() const;
     VocalTunerDocumentController* getDocumentController();
@@ -56,12 +61,17 @@ private:
     void revertBlocks(const std::vector<size_t>& indices, bool toFirst);
     void startBlockPreview(size_t index);
     void stopBlockPreview();
+    void trackProcessing();
+    bool hostProcessesWhileStopped() const;
     juce::String formatAnalysisStatus() const;
     static juce::String formatPlayHead(const PlayHeadSnapshot&);
 
     VocalTunerAudioProcessor& processor;
+    SharpLookAndFeel lookAndFeel;       // 화면 요소보다 먼저 만들고 나중에 없앤다
     TrackPanel trackPanel;
     PianoRollView pianoRoll;
+    SettingsPanel settingsPanel;
+    juce::TooltipWindow tooltips { this, 450 };
 
     // 여러 트랙: 편집 중인 트랙은 기본으로 이 인스턴스의 클립이고, 다른 편집 가능 트랙의 블롭을 누르면 바뀐다
     const juce::ARAPlaybackRegion* activeOverride = nullptr;
@@ -79,6 +89,12 @@ private:
     std::optional<double> pendingSeekSec;
     double snapshotTimeAtSeek = 0.0;
     double shownStart = 0.0, shownDuration = 0.0;
+
+    // 미리 듣기
+    std::uint32_t lastProcessCount = 0;
+    juce::uint32 lastProcessChangeMs = 0;
+    bool previewByHost = false;
+    double previewSongStart = 0.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(VocalTunerAudioProcessorEditor)
 };

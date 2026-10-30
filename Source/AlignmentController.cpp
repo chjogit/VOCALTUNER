@@ -30,9 +30,21 @@ TrackSettings& AlignmentController::settings(const juce::ARAPlaybackRegion* regi
     return tracks[trackOf(region)];
 }
 
-void AlignmentController::setReference(const juce::ARAPlaybackRegion* region)
+int AlignmentController::referenceSlot(const juce::ARAPlaybackRegion* region) const
 {
-    referenceTrack = trackOf(region);
+    if (region == nullptr)
+        return 0;
+    const auto found = referenceSlots.find(trackOf(region));
+    return found != referenceSlots.end() ? found->second : 0;
+}
+
+void AlignmentController::setReferenceSlot(const juce::ARAPlaybackRegion* region, int slot)
+{
+    const auto key = trackOf(region);
+    for (auto it = referenceSlots.begin(); it != referenceSlots.end();)
+        it = it->first == key || it->second == slot ? referenceSlots.erase(it) : std::next(it);
+    if (key != nullptr && slot > 0)
+        referenceSlots[key] = slot;
     cache.clear();
 }
 
@@ -49,8 +61,8 @@ void AlignmentController::prune(const std::vector<const juce::ARAPlaybackRegion*
         it = isLive(it->first) ? std::next(it) : baselines.erase(it);
     for (auto it = cache.begin(); it != cache.end();)
         it = isLive(it->first) ? std::next(it) : cache.erase(it);
-    if (referenceTrack != nullptr && ! isLiveTrack(referenceTrack))
-        setReference(nullptr);
+    for (auto it = referenceSlots.begin(); it != referenceSlots.end();)
+        it = isLiveTrack(it->first) ? std::next(it) : referenceSlots.erase(it);
 }
 
 bool AlignmentController::isLive(const juce::ARAPlaybackRegion* r) const
@@ -64,7 +76,7 @@ const juce::ARAPlaybackRegion* AlignmentController::referenceFor(const juce::ARA
     double bestOverlap = 0.0;
     for (const auto* r : live)
     {
-        if (trackOf(r) != referenceTrack)
+        if (! isReference(r))
             continue;
         const auto overlap = std::min(r->getEndInPlaybackTime(), target->getEndInPlaybackTime())
                            - std::max(r->getStartInPlaybackTime(), target->getStartInPlaybackTime());
@@ -104,7 +116,7 @@ AlignmentController::Prepared AlignmentController::prepare(const juce::ARAPlayba
     Prepared p;
     if (target == nullptr)
         return p.fail(u8("맞출 트랙이 없습니다"));
-    if (referenceTrack == nullptr)
+    if (referenceSlots.empty())
         return p.fail(u8("먼저 ‘기준’ 트랙을 지정하세요"));
     if (isReference(target))
         return p.fail(u8("기준 트랙은 맞출 수 없습니다"));

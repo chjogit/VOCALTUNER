@@ -35,12 +35,13 @@ void PianoRollView::paint(juce::Graphics& g)
 
     drawKeyLabels(g);
     drawRuler(g);
-    drawToolbarHint(g);
+    drawToolbarStrip(g);
+    drawHintBox(g);
 
     if (content.features == nullptr)
     {
         g.setColour(juce::Colours::white.withAlpha(0.7f));
-        g.setFont(15.0f);
+        g.setFont(fontSize(15.0f));
         g.drawFittedText(content.message.isEmpty() ? "Analyzing..." : content.message,
                          plotBounds().reduced(20), juce::Justification::centred, 3);
     }
@@ -85,9 +86,9 @@ void PianoRollView::drawTimeGrid(juce::Graphics& g) const
 void PianoRollView::drawRuler(juce::Graphics& g) const
 {
     const juce::Rectangle<int> ruler(gutterWidth, 0, getWidth() - gutterWidth, rulerHeight);
-    g.setColour(juce::Colour(0xff2a2c33));
+    g.setColour(background.darker(0.2f));
     g.fillRect(ruler);
-    g.setColour(juce::Colours::black.withAlpha(0.5f));
+    g.setColour(juce::Colours::black);
     g.drawHorizontalLine(rulerHeight - 1, static_cast<float>(gutterWidth), static_cast<float>(getWidth()));
 
     juce::Graphics::ScopedSaveState state(g);
@@ -95,13 +96,13 @@ void PianoRollView::drawRuler(juce::Graphics& g) const
     g.setOrigin(gutterWidth, 0);
 
     const auto step = timeGridStep();
-    g.setFont(11.0f);
+    g.setFont(fontSize(11.0f));
     for (auto n = std::ceil(viewport.startSec / step); n * step <= viewport.endSec(); n += 1.0)
     {
         const auto x = static_cast<int>(viewport.timeToX(n * step));
-        g.setColour(juce::Colours::white.withAlpha(0.35f));
+        g.setColour(inkFaint);
         g.drawVerticalLine(x, static_cast<float>(rulerHeight - 8), static_cast<float>(rulerHeight - 1));
-        g.setColour(juce::Colours::white.withAlpha(0.75f));
+        g.setColour(inkDim);
         g.drawText(formatTime(n * step), x + 4, 2, 60, rulerHeight - 4, juce::Justification::centredLeft, false);
     }
 
@@ -109,14 +110,20 @@ void PianoRollView::drawRuler(juce::Graphics& g) const
     g.fillRect(static_cast<float>(viewport.timeToX(playheadSec)) - 0.75f, 0.0f, 1.5f, static_cast<float>(rulerHeight));
 }
 
-void PianoRollView::drawToolbarHint(juce::Graphics& g) const
+// 도구 막대를 위에 붙였을 때만 눈금자 아래에 줄을 깐다
+void PianoRollView::drawToolbarStrip(juce::Graphics& g) const
 {
-    const juce::Rectangle<int> toolbar(0, rulerHeight, getWidth(), toolbarHeight);
-    g.setColour(juce::Colour(0xff24262c));
-    g.fillRect(toolbar);
-    g.setColour(juce::Colours::black.withAlpha(0.5f));
-    g.drawHorizontalLine(rulerHeight + toolbarHeight - 1, 0.0f, static_cast<float>(getWidth()));
+    if (toolbarSpace() == 0)
+        return;
+    const juce::Rectangle<int> strip(0, rulerHeight, getWidth(), toolbarSpace());
+    g.setColour(background.darker(0.2f));
+    g.fillRect(strip);
+    g.setColour(juce::Colours::black);
+    g.drawHorizontalLine(strip.getBottom() - 1, 0.0f, static_cast<float>(getWidth()));
+}
 
+const char* PianoRollView::hintText() const
+{
     const char* hint = "";
     if (mode == Mode::Curve)
         hint = curveTool == CurveTool::Vertical
@@ -139,22 +146,42 @@ void PianoRollView::drawToolbarHint(juce::Graphics& g) const
     else
         hint = "위아래: 음정  |  선택한 블록 좌우: 타이밍, 양 끝: 길이  |  더블클릭: 음정 가운데로  |  끄는 중 Ctrl: 미세 조정";
 
-    g.setColour(juce::Colours::white.withAlpha(0.45f));
-    g.setFont(12.0f);
-    const auto left = redoButton.getRight() + 12;
-    g.drawText(juce::String::fromUTF8(hint), toolbar.withTrimmedLeft(left).reduced(4, 0), juce::Justification::centredLeft, true);
+    return hint;
+}
+
+// 오른쪽 아래 설명 상자: 배경 투명도 50%, 안쪽 여백 10, 글자는 투명도 30%
+void PianoRollView::drawHintBox(juce::Graphics& g) const
+{
+    const auto text = juce::String::fromUTF8(hintText());
+    if (text.isEmpty() || content.features == nullptr)
+        return;
+    constexpr int padding = 10, margin = 16;
+    const auto plot = plotBounds();
+    const auto maxWidth = static_cast<float>(std::min(430, plot.getWidth() - 2 * margin));
+
+    juce::AttributedString attributed;
+    attributed.append(text, juce::Font(juce::FontOptions(fontSize(12.0f))), ink.withAlpha(0.7f));
+    attributed.setLineSpacing(3.0f);
+    juce::TextLayout layout;
+    layout.createLayout(attributed, maxWidth - 2.0f * padding);
+    const auto box = juce::Rectangle<float>(layout.getWidth() + 2.0f * padding, layout.getHeight() + 2.0f * padding)
+                         .withPosition(static_cast<float>(plot.getRight() - margin) - layout.getWidth() - 2.0f * padding,
+                                       static_cast<float>(plot.getBottom() - margin) - layout.getHeight() - 2.0f * padding);
+    g.setColour(juce::Colours::black.withAlpha(0.5f));
+    g.fillRect(box);
+    layout.draw(g, box.reduced(static_cast<float>(padding)));
 }
 
 void PianoRollView::drawKeyLabels(juce::Graphics& g) const
 {
-    const auto top = rulerHeight + toolbarHeight;
+    const auto top = rulerHeight + toolbarSpace();
     g.setColour(background);
     g.fillRect(0, top, gutterWidth, getHeight() - top);
     juce::Graphics::ScopedSaveState state(g);
     g.reduceClipRegion(0, top, gutterWidth, getHeight() - top);
 
     const auto showAll = viewport.pixelsPerSemitone() >= 14.0;
-    g.setFont(11.0f);
+    g.setFont(fontSize(11.0f));
     const auto first = static_cast<int>(std::floor(viewport.bottomMidi));
     const auto last = static_cast<int>(std::ceil(viewport.topMidi));
     for (int midi = first; midi <= last; ++midi)
@@ -162,7 +189,7 @@ void PianoRollView::drawKeyLabels(juce::Graphics& g) const
         if (! showAll && midi % 12 != 0)
             continue;
         const auto y = static_cast<float>(viewport.midiToY(midi));
-        g.setColour(juce::Colours::white.withAlpha(midi % 12 == 0 ? 0.8f : 0.45f));
+        g.setColour(midi % 12 == 0 ? inkDim : inkFaint);
         g.drawText(noteName(midi), 2, top + static_cast<int>(y) - 7, gutterWidth - 6, 14, juce::Justification::centredRight, false);
     }
 }
@@ -178,7 +205,7 @@ void PianoRollView::drawPlayhead(juce::Graphics& g) const
 
 // ------------------------------------------------------------------ 블롭
 
-// 다른 트랙: 편집 가능 = 선명, 보기만 = 반투명 50% + 채도 10%, 숨김 = 그리지 않음. 트랙마다 색조를 달리한다.
+// 다른 트랙: 편집 가능 = 선명, 보기만 = 반투명 50% + 채도 10%, 숨김 = 그리지 않음. 기준 트랙은 기준 색으로.
 void PianoRollView::drawBackdropLayers(juce::Graphics& g) const
 {
     for (const auto& layer : layers)
@@ -190,6 +217,7 @@ void PianoRollView::drawBackdropLayers(juce::Graphics& g) const
         const auto visibleOnly = layer.view == TrackView::Visible;
         paintingBackdrop = true;
         backdropColourIndex = layer.colourIndex;
+        backdropReferenceSlot = layer.referenceSlot;
         backdropSaturation = visibleOnly ? 0.1f : 1.0f;
         g.beginTransparencyLayer(visibleOnly ? 0.5f : 1.0f);
         drawBlocks(g);
@@ -203,7 +231,11 @@ juce::Colour PianoRollView::tinted(juce::Colour colour) const
 {
     if (! paintingBackdrop)
         return colour;
-    return colour.withRotatedHue(0.17f * static_cast<float>(backdropColourIndex + 1)).withMultipliedSaturation(backdropSaturation);
+    // 기준 트랙은 기준 색 그대로, 다른 트랙은 색조만 조금씩 달리한 차분한 색
+    if (backdropReferenceSlot > 0)
+        return referenceColour(backdropReferenceSlot).withAlpha(colour.getFloatAlpha());
+    return colour.withRotatedHue(0.17f * static_cast<float>(backdropColourIndex + 1))
+                 .withMultipliedSaturation(0.5f * backdropSaturation);
 }
 
 // 모드마다 편집 대상이 아닌 쪽을 흐리게: 블록 모드는 곡선을 투명도 50%, 곡선 모드는 블록을 투명도 70%,
@@ -303,7 +335,7 @@ void PianoRollView::drawBlock(juce::Graphics& g, const std::vector<VocalBlock>& 
     if (! b.lyric.empty() && x2 - x1 > 14.0f)
     {
         g.setColour(juce::Colours::white);
-        g.setFont(13.0f);
+        g.setFont(fontSize(13.0f));
         g.drawText(juce::String::fromUTF8(b.lyric.c_str()), juce::Rectangle<float>(x1, centreY - 8.0f, x2 - x1, 16.0f),
                    juce::Justification::centred, false);
     }
@@ -347,7 +379,7 @@ void PianoRollView::drawBlockCurves(juce::Graphics& g) const
             drawing = true;
         }
     }
-    g.setColour(juce::Colours::white.withAlpha(paintingBackdrop ? 0.6f : 0.9f * curveOpacity()));
+    g.setColour(tinted(curve).withAlpha(paintingBackdrop ? 0.6f : 0.9f * curveOpacity()));
     g.strokePath(path, juce::PathStrokeType(1.2f));
 }
 
@@ -382,7 +414,7 @@ void PianoRollView::drawTransitions(juce::Graphics& g) const
         if (active)
         {
             g.setColour(juce::Colours::white);
-            g.setFont(12.0f);
+            g.setFont(fontSize(12.0f));
             const auto percent = juce::String(juce::roundToInt(100.0 * (*content.blocks)[joint.left].transitionAfter)) + "%";
             g.drawText(percent, juce::Rectangle<float>(handle.x - 30.0f, handle.y - 24.0f, 60.0f, 14.0f), juce::Justification::centred, false);
         }
@@ -455,7 +487,7 @@ void PianoRollView::drawEditHandles(juce::Graphics& g) const
 
         const auto bounds = blockBounds(primary);
         g.setColour(juce::Colours::white.withAlpha(0.9f));
-        g.setFont(12.0f);
+        g.setFont(fontSize(12.0f));
         g.drawText(label, juce::Rectangle<float>(bounds.getX(), bounds.getY() - 18.0f, 140.0f, 16.0f), juce::Justification::centredLeft, false);
     }
 

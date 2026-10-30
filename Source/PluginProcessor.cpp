@@ -31,6 +31,7 @@ void VocalTunerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
     juce::ScopedNoDenormals noDenormals;
     const auto position = readPosition();
     storePosition(position);
+    processCount.fetch_add(1, std::memory_order_relaxed);
 
     const auto realtime = isNonRealtime() ? Realtime::no : Realtime::yes;
     if (processBlockForARA(buffer, realtime, position))

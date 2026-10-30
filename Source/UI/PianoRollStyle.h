@@ -4,15 +4,36 @@
 
 namespace rollstyle
 {
-inline const juce::Colour background   { 0xff1b1c20 };
-inline const juce::Colour whiteKeyRow { 0xff23252b };
-inline const juce::Colour blackKeyRow { 0xff1d1e23 };
-inline const juce::Colour gridLine    { 0x18ffffff };
-inline const juce::Colour octaveLine  { 0x40ffffff };
-inline const juce::Colour voicedFill  { 0xff4f8cff };
-inline const juce::Colour consonantFill { 0xff9aa3b2 };
-inline const juce::Colour playhead    { 0xffff7a3d };
-inline const juce::Colour accent      { 0xff4ade80 };
+// 색은 테마(설정 창)에 따라 바뀐다 (메시지 스레드 전용, 모든 인스턴스 공통). 기본값 = 확정 시안 v3.
+inline juce::Colour background    { 0xff121212 };
+inline juce::Colour whiteKeyRow   { 0xff1a1a18 };
+inline juce::Colour blackKeyRow   { 0xff151514 };
+inline juce::Colour gridLine      { 0xff222220 };
+inline juce::Colour octaveLine    { 0xff3a3936 };
+inline juce::Colour voicedFill    { 0xffa9a497 };   // 블록
+inline juce::Colour consonantFill { 0xff6f6b62 };
+inline juce::Colour curve         { 0xfff2eee4 };   // F0 곡선
+inline juce::Colour playhead      { 0xffe8a33d };
+inline juce::Colour accent        { 0xffe8a33d };   // 강조 (켜짐, 진행)
+inline juce::Colour ink           { 0xffe9e4d8 };   // 글자
+inline juce::Colour inkDim        { 0xff9a958a };
+inline juce::Colour inkFaint      { 0xff5f5b53 };
+inline juce::Colour panel         { 0xff0e0e0d };   // 왼쪽 패널
+inline juce::Colour chrome        { 0xff0c0c0b };   // 떠 있는 도구 막대 / 설정 창
+inline juce::Colour chromeEdge    { 0xff3b3934 };
+inline float fontScale = 1.0f;
+
+// 기준 트랙 색 (고정): 1 = 네이비, 2 = 베이지
+inline const juce::Colour referenceNavy  { 0xff34558a };
+inline const juce::Colour referenceBeige { 0xffd8c29a };
+inline const juce::Colour logoNavy       { 0xff21213f };
+
+inline juce::Colour referenceColour(int slot) noexcept
+{
+    return slot == 1 ? referenceNavy : (slot == 2 ? referenceBeige : juce::Colour(0xff2b2a27));
+}
+
+inline float fontSize(float size) noexcept { return size * fontScale; }
 
 inline bool isBlackKey(int midi) noexcept
 {

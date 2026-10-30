@@ -1,6 +1,7 @@
 #include "ToolIcons.h"
 #include <algorithm>
 #include <cmath>
+#include "PianoRollStyle.h"
 
 namespace
 {
@@ -177,17 +178,26 @@ juce::Colour IconTextButton::currentTextColour() const
     return findColour(id).withMultipliedAlpha(isEnabled() ? 1.0f : 0.5f);
 }
 
+void IconTextButton::paintBoldText(juce::Graphics& g)
+{
+    g.setColour(currentTextColour());
+    g.setFont(juce::Font(juce::FontOptions(rollstyle::fontSize(15.0f), juce::Font::bold)));
+    g.drawText(getButtonText(), getLocalBounds().reduced(10, 0), juce::Justification::centredLeft, false);
+}
+
 void IconTextButton::paintButton(juce::Graphics& g, bool highlighted, bool down)
 {
-    if (icon == ToolIcon::None)
+    if (icon == ToolIcon::None && ! boldText)
         return juce::TextButton::paintButton(g, highlighted, down);
 
     auto& lf = getLookAndFeel();
     const auto background = findColour(getToggleState() ? buttonOnColourId : buttonColourId);
     lf.drawButtonBackground(g, *this, background, highlighted, down);
+    if (icon == ToolIcon::None)
+        return paintBoldText(g);
 
     const auto font = lf.getTextButtonFont(*this, getHeight());
-    const auto contentWidth = iconSize + iconGap + textWidth(font, getButtonText());
+    const auto contentWidth = iconOnly ? iconSize : iconSize + iconGap + textWidth(font, getButtonText());
     auto area = getLocalBounds().toFloat();
     const auto left = std::max(4.0f, (area.getWidth() - contentWidth) * 0.5f);
 
@@ -195,7 +205,24 @@ void IconTextButton::paintButton(juce::Graphics& g, bool highlighted, bool down)
     const auto fit = juce::AffineTransform::scale(iconSize / iconGrid).translated(iconBox.getX(), iconBox.getY());
     g.setColour(currentTextColour());
     g.strokePath(iconPath, juce::PathStrokeType(1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded), fit);
+    if (iconOnly)
+        return;
 
     g.setFont(font);
     g.drawText(getButtonText(), area.withLeft(iconBox.getRight() + iconGap), juce::Justification::centredLeft, false);
+}
+
+void drawGearIcon(juce::Graphics& g, juce::Rectangle<float> area)
+{
+    juce::Path p;
+    p.addEllipse(5.2f, 5.2f, 5.6f, 5.6f);
+    for (int i = 0; i < 8; ++i)
+    {
+        const auto a = static_cast<float>(i) * juce::MathConstants<float>::pi / 4.0f;
+        p.startNewSubPath(8.0f + 4.6f * std::sin(a), 8.0f - 4.6f * std::cos(a));
+        p.lineTo(8.0f + 7.0f * std::sin(a), 8.0f - 7.0f * std::cos(a));
+    }
+    const auto fit = juce::AffineTransform::scale(area.getWidth() / iconGrid, area.getHeight() / iconGrid).translated(area.getX(), area.getY());
+    g.setColour(rollstyle::ink);
+    g.strokePath(p, juce::PathStrokeType(1.3f), fit);
 }

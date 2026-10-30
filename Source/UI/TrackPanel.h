@@ -6,33 +6,43 @@
 #include "ReferenceFit.h"
 #include "TrackTypes.h"
 
-// 왼쪽 트랙 메뉴: 트랙별 표시 상태(편집 / 보기 / 숨김), 레퍼런스 지정, 정렬 기능 켜기,
-// 그리고 편집 중인 트랙의 역할(박자 / 음정) 설정. 키보드 포커스를 받지 않는다 (DAW 단축키 통과).
-class TrackPanel : public juce::Component
+// 왼쪽 패널 (시안 v3): 로고 / 트랙 줄(보정, 기준 색) / 편집 중인 트랙의 역할 / 상태줄 / 설정 / 가이드 모드.
+// 오른쪽 가장자리 탭으로 접고 편다. 키보드 포커스를 받지 않는다 (DAW 단축키 통과).
+class TrackPanel : public juce::Component, public juce::TooltipClient
 {
 public:
     struct Row
     {
         const void* id = nullptr;
         juce::String name;
+        juce::String detail;        // 둘째 줄: 표시 상태 / 맞춘 기준 / 클립 수
         TrackView view = TrackView::Editable;
-        bool isReference = false;
+        int referenceSlot = 0;      // 0 = 기준 아님, 1 = 네이비, 2 = 베이지
         bool isActive = false;      // 지금 편집 중인 트랙
         bool baseCorrection = true; // 기초 자동 보정 켜짐
     };
 
     std::function<void(const void* id, TrackView)> onViewChanged;
     std::function<void(const void* id)> onActivate;
-    std::function<void(const void* id)> onReferenceChosen;      // 같은 트랙을 다시 누르면 nullptr
-    std::function<void(bool)> onAlignmentToggled;
+    std::function<void(const void* id, int slot)> onReferenceChosen;   // 기준 버튼: 꺼짐 -> 네이비 -> 베이지 -> 꺼짐
+    std::function<void(bool)> onAlignmentToggled;                       // 가이드 모드
     std::function<void(const TrackRoles&)> onRolesChanged;      // 편집 중인 트랙의 역할 (슬라이더는 드래그 중에도 호출)
     std::function<void()> onRolesGestureBegin;                  // 슬라이더 드래그 시작 (되돌리기 지점)
     std::function<void()> onFitRequested;                       // 편집 중인 트랙 맞추기
     std::function<void()> onFitAllRequested;                    // 역할이 켜진 모든 트랙 맞추기
     std::function<void()> onFitCancelled;                       // 진행 중인 맞추기 취소
     std::function<void(const void* id, bool on)> onBaseCorrectionToggled;
+    std::function<void()> onSettingsClicked;
+    std::function<void()> onCollapseToggled;
 
-    static constexpr int preferredWidth = 230;
+    static constexpr int expandedWidth = 236;
+    static constexpr int collapsedWidth = 16;
+    int preferredWidth() const noexcept { return collapsed ? collapsedWidth : expandedWidth; }
+    bool isCollapsed() const noexcept { return collapsed; }
+    void setCollapsed(bool);
+    // 설정 줄의 위치 (편집기가 설정 창을 그 옆에 띄운다)
+    juce::Rectangle<int> settingsRowBounds() const;
+    void setSettingsOpen(bool);
 
     TrackPanel();
 
@@ -40,26 +50,38 @@ public:
     void setAlignmentStatus(bool active, const juce::String& status);
     // 맞추기 진행률 0..1 (음수 = 진행 중 아님). 상태줄에 로딩바와 취소 버튼을 보여준다
     void setFitProgress(double progress, const juce::String& stage);
-    // 편집 중인 트랙 정보: 레퍼런스가 있고 편집 트랙이 레퍼런스가 아니면 역할 설정을 보여준다
+    // 편집 중인 트랙 정보: 기준이 있고 편집 트랙이 기준이 아니면 역할 설정을 보여준다
     void setActiveRoles(const TrackRoles&, bool canEditRoles, const juce::String& referenceName);
 
     void paint(juce::Graphics&) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent&) override;
+    juce::String getTooltip() override;
 
 private:
-    static constexpr int headerHeight = 60;
-    static constexpr int rowHeight = 26;
+    static constexpr int headerHeight = 66;
+    static constexpr int rowHeight = 46;
+    static constexpr int footerRowHeight = 46;
 
     juce::Rectangle<int> rowBounds(size_t index) const;
-    juce::Rectangle<int> viewBox(size_t index) const;
+    juce::Rectangle<int> detailText(size_t index) const;
     juce::Rectangle<int> referenceBox(size_t index) const;
     juce::Rectangle<int> correctionBox(size_t index) const;
+    juce::Rectangle<int> collapseTab() const;
+    juce::Rectangle<int> guideRowBounds() const;
     juce::Rectangle<int> statusArea() const;
+    int rowsBottom() const noexcept;
+    void paintHeader(juce::Graphics&);
+    void paintRow(juce::Graphics&, size_t index);
+    void paintChip(juce::Graphics&, juce::Rectangle<int>, const char* text, juce::Colour fill, juce::Colour textColour, bool outlined);
+    void paintRoleLabels(juce::Graphics&);
+    void paintFooter(juce::Graphics&);
     void paintStatus(juce::Graphics&);
+    void paintCollapseTab(juce::Graphics&);
     void layoutDetails();
     void notifyRoles();
     void syncRoleControls();
+    void handleRowClick(size_t index, juce::Point<int>);
 
     std::vector<Row> rows;
     bool alignmentActive = false;
@@ -70,14 +92,15 @@ private:
     bool syncing = false;
     double fitProgress = -1.0;
     juce::String fitStage;
+    bool collapsed = false;
+    bool settingsOpen = false;
 
-    juce::TextButton alignmentButton;
     juce::TextButton timingToggle, pitchToggle, relationButton, fitButton, fitAllButton, cancelButton;
     struct LabeledSlider
     {
         juce::Slider slider;
         juce::String label;
     };
-    std::array<LabeledSlider, 3> sliders;   // 박자 정도 / 음정 정도 / 이음 정도
+    std::array<LabeledSlider, 3> sliders;   // 박자 / 음정 / 이음
     juce::Rectangle<int> detailsArea;
 };

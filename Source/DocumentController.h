@@ -20,6 +20,7 @@ public:
 
     // 호스트(Studio One)의 재생 위치를 옮기도록 요청. 호스트가 지원하지 않으면 false. 메시지 스레드 전용.
     bool requestHostPlaybackPosition(double songSec);
+    bool requestHostPlayback(bool start);   // 재생 시작 / 정지 요청
 
 protected:
     void willBeginEditing(juce::ARADocument*) override { processingLock.beginEditing(); }

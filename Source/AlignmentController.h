@@ -36,9 +36,11 @@ public:
     static TrackKey trackOf(const juce::ARAPlaybackRegion*) noexcept;
 
     TrackSettings& settings(const juce::ARAPlaybackRegion*);       // 그 클립이 속한 트랙의 설정
-    bool isReference(const juce::ARAPlaybackRegion* r) const noexcept { return r != nullptr && trackOf(r) == referenceTrack; }
-    bool hasReference() const noexcept { return referenceTrack != nullptr; }
-    void setReference(const juce::ARAPlaybackRegion*);              // 그 클립의 트랙 전체가 기준. nullptr = 해제
+    // 기준은 둘까지: 1 = 네이비, 2 = 베이지. 따라가는 클립은 같은 시간에 가장 많이 겹치는 기준 클립에 맞춘다.
+    int referenceSlot(const juce::ARAPlaybackRegion*) const;        // 0 = 기준 아님
+    bool isReference(const juce::ARAPlaybackRegion* r) const { return referenceSlot(r) > 0; }
+    bool hasReference() const noexcept { return ! referenceSlots.empty(); }
+    void setReferenceSlot(const juce::ARAPlaybackRegion*, int slot); // 그 클립의 트랙 전체. 0 = 해제, 같은 색을 쓰던 트랙은 해제된다
     bool hasBaseline(const juce::ARAPlaybackRegion* r) const { return baselines.count(r) > 0; }
     void prune(const std::vector<const juce::ARAPlaybackRegion*>& live);
 
@@ -59,6 +61,8 @@ public:
     bool isFitting() const noexcept { return job != nullptr; }
     std::function<void(juce::ARAAudioSource*)> onBeforeApply;     // 적용 직전 (편집기가 다른 트랙 되돌리기 단계를 맞춤)
 
+    // target이 맞출 기준 클립 (같은 시간에 가장 많이 겹치는 기준 트랙의 클립). 없으면 nullptr
+    const juce::ARAPlaybackRegion* referenceFor(const juce::ARAPlaybackRegion* target) const;
     static double offsetOf(const juce::ARAPlaybackRegion*) noexcept;
     static juce::ARAAudioSource* sourceOf(const juce::ARAPlaybackRegion*) noexcept;
 
@@ -101,7 +105,6 @@ private:
         size_t pendingAnchors = 0;
     };
 
-    const juce::ARAPlaybackRegion* referenceFor(const juce::ARAPlaybackRegion* target) const;
     static std::vector<WordAnchor> anchorsFor(const AlignmentData&, double referenceOffset, const AlignmentData&, double targetOffset);
     Prepared prepare(const juce::ARAPlaybackRegion* target) const;
     const AlignResult* cachedMap(const juce::ARAPlaybackRegion* target, const Prepared&) const;
@@ -114,7 +117,7 @@ private:
     FitProgress finishJob(const juce::String& message);
 
     AnalysisManager& analysis;
-    TrackKey referenceTrack = nullptr;
+    std::map<TrackKey, int> referenceSlots;
     std::vector<const juce::ARAPlaybackRegion*> live;
     std::map<TrackKey, TrackSettings> tracks;
     std::map<const juce::ARAPlaybackRegion*, std::shared_ptr<const std::vector<VocalBlock>>> baselines;  // 마지막 맞추기 직전 블록 (정도 슬라이더의 기준)

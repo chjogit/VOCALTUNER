@@ -90,6 +90,12 @@ target_sources(VocalTuner
         Source/UI/TrackPanel.cpp
         Source/UI/PitchBalancePanel.cpp
         Source/UI/ToolIcons.cpp
+        Source/UI/TrackPanelPaint.cpp
+        Source/UI/FloatingToolbar.cpp
+        Source/UI/SettingsPanel.cpp
+        Source/UI/Theme.cpp
+        Source/UI/Logo.cpp
+        Source/UI/SharpLookAndFeel.cpp
         Source/PluginEditorHistory.cpp
         Source/PlaybackPreview.cpp
         Source/PluginEditorPreview.cpp
