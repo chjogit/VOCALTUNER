@@ -12,6 +12,10 @@
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-21213f?style=for-the-badge&labelColor=d8c29a" alt="Windows">
 </p>
 
+<p align="center">
+  <img src="assets/demo.gif" alt="VocalTuner 시연" width="720">
+</p>
+
 ---
 
 ## ⬇️ 다운로드와 설치
