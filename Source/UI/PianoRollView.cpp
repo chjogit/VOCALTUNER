@@ -57,7 +57,8 @@ PianoRollView::PianoRollView()
     balancePanel.onClosed = [this] { toggleBalancePanel(); };
     addChildComponent(balancePanel);
 
-    setWantsKeyboardFocus(false);
+    setWantsKeyboardFocus(true);    // Ctrl+Z가 Studio One의 되돌리기로 넘어가지 않게 키를 먼저 받는다
+    setMouseClickGrabsKeyboardFocus(true);
     syncToolbar();
 }
 
@@ -233,37 +234,65 @@ void PianoRollView::showBlockMenu(const juce::MouseEvent& e)
 
 void PianoRollView::pollShortcutKeys()
 {
-    const auto modifiers = juce::ModifierKeys::getCurrentModifiersRealtime();
+    // 놓은 이벤트를 못 받는 경우(호스트가 재생을 시작하며 마우스를 가져감 등)에도 미리 듣기는 버튼을 놓으면 끝낸다
+    if (previewing && ! juce::ModifierKeys::getCurrentModifiersRealtime().isAnyMouseButtonDown())
+    {
+        previewing = false;
+        if (onPreviewStop)
+            onPreviewStop();
+    }
     const auto inside = isMouseOver(true);
-    const auto plain = ! modifiers.isAnyModifierKeyDown();
-    const auto ctrlOnly = modifiers.isCtrlDown() && ! modifiers.isShiftDown() && ! modifiers.isAltDown();
-
-    for (size_t i = 0; i < 6; ++i)
+    const auto plain = ! juce::ModifierKeys::getCurrentModifiersRealtime().isAnyModifierKeyDown();
+    for (size_t i = 0; i < keyWasDown.size(); ++i)
     {
         const auto down = juce::KeyPress::isKeyCurrentlyDown(static_cast<int>('1' + i))
                        || juce::KeyPress::isKeyCurrentlyDown(juce::KeyPress::numberPad1 + static_cast<int>(i));
-        if (inside && down && ! keyWasDown[i])
-        {
-            if (plain)
-                selectToolByNumber(i);
-            else if (ctrlOnly && i < modeCount)
-                setMode(static_cast<Mode>(i));
-            else if (ctrlOnly && i == modeCount)
-                toggleBalancePanel();
-        }
+        if (inside && down && plain && ! keyWasDown[i])
+            selectToolByNumber(i);
         keyWasDown[i] = down;
     }
+}
 
-    // Ctrl+Z 되돌리기, Ctrl+Shift+Z 다시
-    const auto zDown = juce::KeyPress::isKeyCurrentlyDown('Z');
-    if (inside && zDown && ! keyWasDown[7] && modifiers.isCtrlDown() && ! modifiers.isAltDown())
-        requestUndo(modifiers.isShiftDown());
-    keyWasDown[7] = zDown;
+namespace
+{
+int digitOf(const juce::KeyPress& key) noexcept
+{
+    const auto code = key.getKeyCode();
+    if (code >= '1' && code <= '9')
+        return code - '0';
+    if (code >= juce::KeyPress::numberPad1 && code <= juce::KeyPress::numberPad9)
+        return code - juce::KeyPress::numberPad1 + 1;
+    return 0;
+}
+} // namespace
 
-    const auto aDown = juce::KeyPress::isKeyCurrentlyDown('A');
-    if (inside && ctrlOnly && aDown && ! keyWasDown[6])
-        selectAll();
-    keyWasDown[6] = aDown;
+bool PianoRollView::keyPressed(const juce::KeyPress& key)
+{
+    const auto mods = key.getModifiers();
+    if (! mods.isCtrlDown() || mods.isAltDown())
+        return false;
+    const auto letter = juce::CharacterFunctions::toUpperCase(static_cast<juce::juce_wchar>(key.getKeyCode()));
+    if (letter == 'Z')
+    {
+        requestUndo(mods.isShiftDown());    // 다중 선택 중이라 막혀 있어도 호스트로는 넘기지 않는다
+        return true;
+    }
+    if (mods.isShiftDown())
+        return false;
+    if (letter == 'A')
+        return selectAll(), true;
+    const auto digit = digitOf(key);
+    if (digit >= 1 && digit <= static_cast<int>(modeCount))
+        return setMode(static_cast<Mode>(digit - 1)), true;
+    if (digit == static_cast<int>(modeCount) + 1)
+        return toggleBalancePanel(), true;
+    return false;
+}
+
+void PianoRollView::mouseEnter(const juce::MouseEvent&)
+{
+    if (isShowing() && ! hasKeyboardFocus(true))
+        grabKeyboardFocus();
 }
 
 void PianoRollView::updateCursor(juce::Point<float> position)

@@ -30,6 +30,8 @@ private:
     struct Playing
     {
         std::shared_ptr<const AudioPlanes> current, previous;  // nullptr = 원본 리더
+        std::shared_ptr<const RenderedSegment> segment, previousSegment;   // 미리 듣기용 구간 결과 (전체 렌더보다 새로울 때만)
+        int segmentFade = 0;                                   // previousSegment에서 넘어간 샘플 수
         bool known = false;
         int fadeDone = 0;
     };
@@ -42,12 +44,16 @@ private:
         std::uint32_t generation = 0;
         int fadeIn = 0;         // 지금까지 올린 샘플 수
         int fadeOut = -1;       // -1 = 줄이는 중 아님, 그 외 남은 샘플 수
+        juce::ARAAudioSource* next = nullptr;      // 줄인 뒤 이어서 처음부터 다시 재생할 요청 (피치가 바뀜)
+        juce::int64 nextBegin = 0, nextEnd = 0;
     };
 
     void renderPreview(juce::AudioBuffer<float>&, juce::AudioProcessor::Realtime);
     void followPreviewRequest();
     juce::ARAAudioSource* ownedSource(const void* id) const noexcept;
     void applyPreviewEnvelope(int numSamples) noexcept;
+    void overlaySegment(juce::ARAAudioSource*, Playing*, int startInBuffer, int numSamples, juce::int64 startInSource,
+                        juce::AudioProcessor::Realtime);
 
     Reader createReader(juce::ARAAudioSource*);
     std::shared_ptr<const AudioPlanes> latestFor(juce::ARAAudioSource*, Playing*, juce::AudioProcessor::Realtime) const;

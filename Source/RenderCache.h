@@ -26,6 +26,15 @@ public:
     bool waitUntilUpToDate(juce::ARAAudioSource*, int timeoutMs) const;
     bool isRendering() const noexcept { return rendering.load(); }
 
+    // 블록 미리 듣기: 출력 구간 [begin, end)만 기다림 없이 바로 렌더한다 (메시지 스레드).
+    // 요청이 걸려 있는 동안 전체 렌더는 미룬다. 블록이 바뀔 때마다 다시 부르면 그 블록 목록으로 다시 렌더한다.
+    void requestPreview(juce::ARAAudioSource*, std::shared_ptr<const std::vector<VocalBlock>>, juce::int64 begin, juce::int64 end);
+    void clearPreview();
+    // 이 블록 목록으로 만든 구간 결과가 준비됐는지 (메시지 스레드)
+    bool isPreviewReady(juce::ARAAudioSource*, const std::shared_ptr<const std::vector<VocalBlock>>&) const;
+    // 오디오 스레드용. 전체 렌더보다 새로운 구간 결과 (없으면 nullptr). 잠금을 못 잡으면 false.
+    bool tryGetSegment(juce::ARAAudioSource*, std::shared_ptr<const RenderedSegment>& out) const noexcept;
+
 private:
     struct Entry
     {
@@ -33,6 +42,16 @@ private:
         std::shared_ptr<const VocalFeatures> seenFeatures, audioFeatures;
         juce::uint32 seenAtMs = 0, retryAtMs = 0;
         std::shared_ptr<const AudioPlanes> sourceAudio, rendered;
+        std::shared_ptr<const RenderedSegment> segment;         // 전체 렌더가 끝나면 비운다
+        std::shared_ptr<const std::vector<VocalBlock>> segmentFor;
+    };
+
+    struct PreviewJob
+    {
+        juce::ARAAudioSource* source = nullptr;
+        juce::int64 begin = 0, end = 0;
+        std::shared_ptr<const std::vector<VocalBlock>> blocks, renderedFor;
+        juce::int64 renderedBegin = -1, renderedEnd = -1;
     };
 
     void run() override;
@@ -44,12 +63,17 @@ private:
     void publish(juce::ARAAudioSource*, std::shared_ptr<const AudioPlanes>,
                  std::shared_ptr<const std::vector<VocalBlock>>);
     void releaseRetired();
+    bool servicePreview();
+    std::shared_ptr<const AudioPlanes> sourceAudioFor(juce::ARAAudioSource*);
+    void publishSegment(const PreviewJob&, std::shared_ptr<const std::vector<VocalBlock>>, RenderedSegment);
 
     AnalysisManager& analysis;
     mutable std::mutex mutex;           // entries 보호. 오디오 스레드는 try_lock만 사용
     std::mutex workMutex;               // 렌더 중인 소스가 사라지기 전에 기다림
     std::map<juce::ARAAudioSource*, Entry> entries;
-    std::vector<std::shared_ptr<const AudioPlanes>> retired;     // 교체된 결과 (mutex 보호)
+    std::vector<std::shared_ptr<const void>> retired;            // 교체된 결과 (mutex 보호)
+    PreviewJob previewJob;                                       // mutex 보호
+    std::atomic<bool> previewActive { false };
     std::atomic<juce::ARAAudioSource*> removing { nullptr };
     std::atomic<bool> rendering { false };
 };

@@ -174,6 +174,7 @@ bool PlaybackRenderer::renderRegion(ARAPlaybackRegion& region, AudioBuffer<float
         return false;
     if (state != nullptr && state->fadeDone < fadeLength)
         fadeFromPrevious(*state, source, startInBuffer, numSamples, startInSource, realtime);
+    overlaySegment(source, state, startInBuffer, numSamples, startInSource, realtime);
 
     for (int ch = 0; ch < numChannels; ++ch)
         output.addFrom(ch, startInBuffer, mixBuffer, ch, startInBuffer, numSamples);

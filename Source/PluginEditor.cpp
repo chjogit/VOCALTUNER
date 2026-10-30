@@ -108,6 +108,7 @@ void VocalTunerAudioProcessorEditor::timerCallback()
     updatePianoRoll();
     pianoRoll.pollShortcutKeys();
     trackProcessing();
+    pollBlockPreview();
     if (const auto* controller = getDocumentController())
         if (auto* source = currentSource())
         {

@@ -61,6 +61,9 @@ private:
     void revertBlocks(const std::vector<size_t>& indices, bool toFirst);
     void startBlockPreview(size_t index);
     void stopBlockPreview();
+    void pollBlockPreview();
+    void requestPreviewRender();
+    void playBlockPreview();
     void trackProcessing();
     bool hostProcessesWhileStopped() const;
     juce::String formatAnalysisStatus() const;
@@ -93,8 +96,14 @@ private:
     // 미리 듣기
     std::uint32_t lastProcessCount = 0;
     juce::uint32 lastProcessChangeMs = 0;
-    bool previewByHost = false;
+    bool previewByHost = false;          // 호스트 재생을 켜 둔 상태
+    bool previewUsesHost = false;        // 누를 때 정한 방식 (호스트 재생 / 플러그인 직접 재생)
+    bool previewWaiting = false;         // 처음 누를 때: 편집 반영 구간 렌더를 기다리는 중
+    juce::uint32 previewStartedMs = 0, previewLengthMs = 0;   // 블록 끝에 닿으면 처음부터 다시
     double previewSongStart = 0.0;
+    juce::ARAAudioSource* previewSource = nullptr;
+    size_t previewIndex = 0;
+    std::shared_ptr<const std::vector<VocalBlock>> previewBlocks;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(VocalTunerAudioProcessorEditor)
 };
