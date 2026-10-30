@@ -128,10 +128,36 @@ void TrackPanel::setFitProgress(double progress, const juce::String& stage)
         return;
     fitProgress = running ? juce::jlimit(0.0, 1.0, progress) : -1.0;
     fitStage = stage;
-    fitButton.setEnabled(! running);
-    fitAllButton.setEnabled(! running);
+    updateFitButtons();
     layoutDetails();
     repaint(statusArea());
+}
+
+void TrackPanel::setFitBlocked(bool blocked)
+{
+    if (blocked == fitBlocked)
+        return;
+    fitBlocked = blocked;
+    updateFitButtons();
+}
+
+void TrackPanel::setAnalysisProgress(double fraction)
+{
+    if (fraction < 0.0 && analysisProgress < 0.0)
+        return;
+    analysisProgress = fraction;
+    repaint(statusArea());      // 진행 중에는 매번 다시 그려 움직이는 표시를 갱신
+}
+
+void TrackPanel::updateFitButtons()
+{
+    const auto enabled = fitProgress < 0.0 && ! fitBlocked;
+    const auto tip = fitBlocked ? u8("발음·호흡 분석이 끝나면 맞출 수 있습니다") : juce::String();
+    for (auto* b : { &fitButton, &fitAllButton })
+    {
+        b->setEnabled(enabled);
+        b->setTooltip(tip);
+    }
 }
 
 void TrackPanel::setActiveRoles(const TrackRoles& newRoles, bool canEditRoles, const juce::String& newReferenceName)

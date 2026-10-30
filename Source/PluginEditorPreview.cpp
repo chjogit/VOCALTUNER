@@ -39,7 +39,7 @@ bool VocalTunerAudioProcessorEditor::hostProcessesWhileStopped() const
     return juce::Time::getMillisecondCounter() - lastProcessChangeMs < 200;
 }
 
-void VocalTunerAudioProcessorEditor::startBlockPreview(size_t index)
+void VocalTunerAudioProcessorEditor::startBlockPreview(size_t index, bool hold)
 {
     auto* controller = getDocumentController();
     auto* source = currentSource();
@@ -50,12 +50,33 @@ void VocalTunerAudioProcessorEditor::startBlockPreview(size_t index)
         return;
 
     previewSource = source;
+    previewHold = hold;
     previewIndex = index;
     previewBlocks = blocks;
     previewUsesHost = ! hostProcessesWhileStopped();
     requestPreviewRender();
     // 전체 렌더가 최신이면 바로 재생, 아니면 구간 렌더가 끝나는 대로 재생 (편집 전 소리가 나지 않게)
     previewWaiting = ! controller->getRenderCache().isUpToDate(source);
+    if (! previewWaiting)
+        playBlockPreview();
+}
+
+// ←/→로 옮긴 블록을 한 번 들려준다. 호스트 재생으로 듣는 중이면 멈추지 않고 위치만 옮긴다.
+void VocalTunerAudioProcessorEditor::playBlockOnce(size_t index)
+{
+    auto* controller = getDocumentController();
+    if (controller == nullptr)
+        return;
+    if (previewSource == nullptr || ! previewByHost)
+    {
+        stopBlockPreview();
+        return startBlockPreview(index, false);
+    }
+    previewHold = false;
+    previewIndex = index;
+    previewBlocks = controller->getAnalysis().getBlocks(previewSource);
+    requestPreviewRender();
+    previewWaiting = ! controller->getRenderCache().isUpToDate(previewSource);
     if (! previewWaiting)
         playBlockPreview();
 }
@@ -79,7 +100,8 @@ void VocalTunerAudioProcessorEditor::pollBlockPreview()
     if (controller == nullptr || previewSource == nullptr)
         return;
     const auto blocks = controller->getAnalysis().getBlocks(previewSource);
-    if (blocks == nullptr || previewIndex >= blocks->size() || ! juce::ModifierKeys::getCurrentModifiersRealtime().isAnyMouseButtonDown())
+    const auto released = previewHold && ! juce::ModifierKeys::getCurrentModifiersRealtime().isAnyMouseButtonDown();
+    if (blocks == nullptr || previewIndex >= blocks->size() || released)
         return stopBlockPreview();      // 클릭 홀드: 버튼을 놓으면 바로 멈춘다
     if (blocks != previewBlocks && ! soundsSame(*blocks, *previewBlocks))
     {
@@ -87,8 +109,10 @@ void VocalTunerAudioProcessorEditor::pollBlockPreview()
         requestPreviewRender();
     }
     const auto now = juce::Time::getMillisecondCounter();
-    if (previewWaiting ? controller->getRenderCache().isPreviewReady(previewSource, previewBlocks)
-                       : now - previewStartedMs >= previewLengthMs)
+    const auto finished = ! previewWaiting && now - previewStartedMs >= previewLengthMs;
+    if (finished && ! previewHold)
+        return stopBlockPreview();      // 한 번 재생은 블록 끝에서 멈춘다
+    if (previewWaiting ? controller->getRenderCache().isPreviewReady(previewSource, previewBlocks) : finished)
     {
         previewWaiting = false;
         playBlockPreview();

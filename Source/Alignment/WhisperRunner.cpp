@@ -103,8 +103,10 @@ std::vector<TimedWord> transcribeWords(const std::vector<double>& mono, int samp
     const auto threads = juce::String(juce::jmax(2, juce::SystemStats::getNumCpus() / 2));
     juce::StringArray command { setup.executable.getFullPathName(), "-m", setup.model.getFullPathName(), "-f", wav.getFullPathName(),
                                 "-l", "auto", "-ml", "1", "-sow", "-oj", "-of", outPrefix.getFullPathName(), "-np", "-t", threads };
+    // 출력은 받지 않는다(0): 파이프로 받으면서 읽지 않으면 버퍼가 차서 whisper가 멈춘 채 제한 시간까지 기다리게 된다.
+    // 결과는 -oj 로 result.json 파일에 쓴다.
     juce::ChildProcess process;
-    if (! process.start(command) || ! runUntilDone(process, shouldCancel, timeoutSeconds))
+    if (! process.start(command, 0) || ! runUntilDone(process, shouldCancel, timeoutSeconds))
         return {};
     return parseWhisperJson(temp.getChildFile("result.json").loadFileAsString());
 }

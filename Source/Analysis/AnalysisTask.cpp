@@ -16,7 +16,8 @@ AnalysisTask::AnalysisTask(juce::ARAAudioSource& sourceIn, bool hostProgress)
 {
 }
 
-std::optional<AlignmentData> AnalysisTask::runAlignment(const VocalFeatures& features, ParallelFor parallelFor)
+std::optional<AlignmentData> AnalysisTask::runAlignment(const VocalFeatures& features, ParallelFor parallelFor,
+                                                       const std::function<void(const AlignmentData&)>& spectralReady)
 {
     std::vector<double> mono;
     if (! readMono(mono) || isCancelled())
@@ -27,6 +28,8 @@ std::optional<AlignmentData> AnalysisTask::runAlignment(const VocalFeatures& fea
     if (isCancelled() || data.frames.size() == 0)
         return std::nullopt;
     data.kinds = classifyFrames(data.frames, features);
+    if (spectralReady)
+        spectralReady(data);
     if (const auto whisper = locateWhisper())
     {
         data.words = transcribeWords(mono, sampleRate, *whisper, [this] { return isCancelled(); });

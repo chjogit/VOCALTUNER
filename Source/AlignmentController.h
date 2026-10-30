@@ -56,6 +56,7 @@ public:
         juce::String stage, message;    // message: 끝났을 때 결과
     };
     void startFit(std::vector<const juce::ARAPlaybackRegion*> targets);
+    static juce::String changeSummary(const std::vector<VocalBlock>& before, const std::vector<BlockUpdate>& after);
     FitProgress pollFit();              // 메시지 스레드 타이머에서 호출. 끝난 정렬을 적용한다
     void cancelFit();
     bool isFitting() const noexcept { return job != nullptr; }

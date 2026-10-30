@@ -60,6 +60,7 @@ if(DEFINED VOCALTUNER_VST3_COPY_DIR)
 endif()
 
 juce_add_plugin(VocalTuner
+    VERSION ${PROJECT_VERSION}
     COMPANY_NAME "YourCompany"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
@@ -88,6 +89,7 @@ target_sources(VocalTuner
         Source/UI/PianoRollView.cpp
         Source/UI/PianoRollEdit.cpp
         Source/UI/PianoRollDraw.cpp
+        Source/UI/PianoRollNavigate.cpp
         Source/UI/TrackPanel.cpp
         Source/UI/PitchBalancePanel.cpp
         Source/UI/ToolIcons.cpp

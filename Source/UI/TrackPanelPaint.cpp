@@ -162,25 +162,42 @@ void TrackPanel::paintFooter(juce::Graphics& g)
     g.drawText(u8(alignmentActive ? "켜짐" : "꺼짐"), guide.withTrimmedRight(16), juce::Justification::centredRight, false);
 }
 
-// 상태줄: 맞추기 중이면 로딩바(+ 취소 버튼), 아니면 상태 글자
+// 상태줄: 맞추기 중이거나 분석 중이면 위에 단계·퍼센트, 아래에 가는 막대(+ 오른쪽 취소 버튼). 아니면 상태 글자
 void TrackPanel::paintStatus(juce::Graphics& g)
 {
     const auto area = statusArea();
     g.setFont(plain(11.0f));
-    if (fitProgress < 0.0)
-    {
-        if (! alignmentActive)
-            return;
-        g.setColour(inkFaint);
-        g.drawText(status, area, juce::Justification::centredLeft, true);
+    if (fitProgress >= 0.0)
+        return paintBar(g, area.withTrimmedRight(46).toFloat(), fitProgress, fitStage + "...", false);
+    if (! alignmentActive)
         return;
+    if (analysisProgress >= 0.0)
+        return paintBar(g, area.toFloat(), analysisProgress, status, true);
+    g.setColour(ink.withAlpha(0.8f));
+    g.drawText(status, area, juce::Justification::centredLeft, true);
+}
+
+// moving: 한 트랙 분석이 끝날 때까지 수치가 안 바뀌므로, 멈춘 것처럼 보이지 않게 밝은 조각을 흘려 보낸다
+void TrackPanel::paintBar(juce::Graphics& g, juce::Rectangle<float> area, double fraction, const juce::String& label, bool moving)
+{
+    auto text = area.removeFromTop(area.getHeight() - 6.0f).toNearestInt();
+    const auto bar = area.withTrimmedTop(2.0f);
+    g.setColour(inkDim);
+    g.drawText(label, text, juce::Justification::centredLeft, true);
+    if (! moving)
+    {
+        g.setColour(ink);
+        g.drawText(juce::String(juce::roundToInt(fraction * 100.0)) + "%", text, juce::Justification::centredRight, false);
     }
-    const auto bar = area.withTrimmedRight(46).toFloat();
     g.setColour(juce::Colour(0xff2e2d2a));
     g.fillRect(bar);
-    g.setColour(accent);
-    g.fillRect(bar.withWidth(juce::jmax(4.0f, bar.getWidth() * static_cast<float>(fitProgress))));
     g.setColour(ink);
-    g.drawText(fitStage + "  " + juce::String(juce::roundToInt(fitProgress * 100.0)) + "%", bar.toNearestInt().reduced(6, 0),
-               juce::Justification::centredLeft, true);
+    g.fillRect(bar.withWidth(juce::jmax(3.0f, bar.getWidth() * static_cast<float>(fraction))));
+    if (moving)
+    {
+        const auto phase = static_cast<float>(juce::Time::getMillisecondCounter() % 1400) / 1400.0f;
+        const auto w = bar.getWidth() * 0.2f;
+        g.setColour(ink.withAlpha(0.45f));
+        g.fillRect(juce::Rectangle<float>(bar.getX() + phase * (bar.getWidth() + w) - w, bar.getY(), w, bar.getHeight()).getIntersection(bar));
+    }
 }

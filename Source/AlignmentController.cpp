@@ -188,6 +188,24 @@ AlignmentController::Outcome AlignmentController::fit(const juce::ARAPlaybackReg
     return apply(target, p, newBaseline, beginGesture);
 }
 
+// "박자 -46ms · 음정 +15¢": 유성 블록이 평균 얼마나 움직였는지 (앞당김 = 음수)
+juce::String AlignmentController::changeSummary(const std::vector<VocalBlock>& before, const std::vector<BlockUpdate>& updates)
+{
+    double timing = 0.0, cents = 0.0;
+    int count = 0;
+    for (const auto& u : updates)
+    {
+        if (u.index >= before.size() || u.block.isConsonant)
+            continue;
+        timing += u.block.displayStartSec() - before[u.index].displayStartSec();
+        cents += 100.0 * (u.block.displayCenterMidi() - before[u.index].displayCenterMidi());
+        ++count;
+    }
+    const auto n = juce::jmax(1, count);
+    const auto sign = [](int v) { return (v > 0 ? "+" : "") + juce::String(v); };
+    return u8("박자 ") + sign(juce::roundToInt(1000.0 * timing / n)) + "ms" + u8(" · 음정 ") + sign(juce::roundToInt(cents / n)) + juce::String::fromUTF8("¢");
+}
+
 AlignmentController::Outcome AlignmentController::apply(const juce::ARAPlaybackRegion* target, const Prepared& p, bool newBaseline, bool beginGesture)
 {
     const auto* aligned = cachedMap(target, p);
@@ -214,7 +232,7 @@ AlignmentController::Outcome AlignmentController::apply(const juce::ARAPlaybackR
     if (! analysis.replaceBlocks(targetSource, updates))
         return { false, u8("블록을 바꾸지 못했습니다") };
     const auto anchorCount = cache[target].anchorCount;
-    const auto how = anchorCount > 0 ? u8(", 가사 앵커 ") + juce::String((int) anchorCount) + u8("개")
-                                     : (p.referenceData->whisperUsed ? u8(", 가사 겹침 부족") : u8(", Whisper 없음: 소리 모양만 사용"));
-    return { true, u8("맞춤 완료 (평균 차이 ") + juce::String(aligned->meanCost, 2) + how + ")" };
+    const auto how = anchorCount > 0 ? u8(" · 가사 앵커 ") + juce::String((int) anchorCount) + u8("개")
+                                     : (p.referenceData->whisperUsed ? u8(" · 가사 겹침 부족") : u8(" · 소리 모양으로 맞춤"));
+    return { true, u8("맞춤 완료 · ") + changeSummary(*targetBlocks, updates) + how };
 }

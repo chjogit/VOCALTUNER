@@ -15,7 +15,7 @@ std::optional<WhisperSetup> locateWhisper();
 
 // mono를 16 kHz WAV로 내보내 실행하고 단어(소스 시간)를 돌려준다. 실패/취소/없음이면 빈 목록.
 std::vector<TimedWord> transcribeWords(const std::vector<double>& mono, int sampleRate, const WhisperSetup&,
-                                       const std::function<bool()>& shouldCancel, int timeoutSeconds = 600);
+                                       const std::function<bool()>& shouldCancel, int timeoutSeconds = 180);
 
 // whisper.cpp -oj 출력 JSON -> 단어 (테스트 가능하도록 분리)
 std::vector<TimedWord> parseWhisperJson(const juce::String& json);

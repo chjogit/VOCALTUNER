@@ -50,6 +50,8 @@ public:
     void setAlignmentStatus(bool active, const juce::String& status);
     // 맞추기 진행률 0..1 (음수 = 진행 중 아님). 상태줄에 로딩바와 취소 버튼을 보여준다
     void setFitProgress(double progress, const juce::String& stage);
+    void setFitBlocked(bool blocked);       // 분석 중에는 맞추기 버튼을 막는다
+    void setAnalysisProgress(double fraction);  // 발음·호흡 분석 진행 막대 (0..1, 음수 = 없음)
     // 편집 중인 트랙 정보: 기준이 있고 편집 트랙이 기준이 아니면 역할 설정을 보여준다
     void setActiveRoles(const TrackRoles&, bool canEditRoles, const juce::String& referenceName);
 
@@ -91,6 +93,10 @@ private:
     TrackRoles roles;
     bool syncing = false;
     double fitProgress = -1.0;
+    bool fitBlocked = false;
+    double analysisProgress = -1.0;
+    void paintBar(juce::Graphics&, juce::Rectangle<float> bar, double fraction, const juce::String& label, bool moving);
+    void updateFitButtons();
     juce::String fitStage;
     bool collapsed = false;
     bool settingsOpen = false;

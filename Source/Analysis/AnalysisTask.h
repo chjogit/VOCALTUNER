@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <atomic>
@@ -29,7 +30,10 @@ public:
     std::optional<AnalysisResult> run(ParallelFor parallelFor);
 
     // 정렬용 스펙트럼 분석: 오디오를 다시 읽어 MFCC와 구간 분류를 만든다. 취소되면 nullopt
-    std::optional<AlignmentData> runAlignment(const VocalFeatures&, ParallelFor);
+    // 소리 모양(스펙트럼·구간) 결과가 나오면 바로 spectralReady로 알리고, 그다음 가사 인식(Whisper)을 붙인다.
+    // Whisper는 긴 트랙에서 몇 분 걸리므로, 맞추기는 그동안 소리 모양만으로 할 수 있다.
+    std::optional<AlignmentData> runAlignment(const VocalFeatures&, ParallelFor,
+                                              const std::function<void(const AlignmentData&)>& spectralReady = {});
 
     // 메시지 스레드. 읽기 중이면 현재 청크가 끝날 때까지 대기
     void cancel();

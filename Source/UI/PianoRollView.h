@@ -68,6 +68,7 @@ public:
     std::function<void(const std::vector<size_t>& indices, bool toFirst)> onRevertRequested;   // 우클릭: 처음으로 / 한 단계
     std::function<void(size_t index)> onPreviewStart;                        // 블록을 누르는 동안 미리 듣기
     std::function<void()> onPreviewStop;
+    std::function<void(size_t index)> onPreviewOnce;                         // ←/→로 옮긴 블록을 한 번 들려주기
     std::function<void(const void* layerId)> onLayerPicked;                  // 다른 편집 가능 트랙의 블롭 클릭
 
     PianoRollView();
@@ -79,7 +80,7 @@ public:
     const std::vector<size_t>& selectedBlocks() const noexcept { return selection; }
     // 숫자 키 1~6(도구). 포커스가 없어도 마우스가 위에 있으면 동작하도록 타이머에서 키 상태를 직접 읽는다.
     void pollShortcutKeys();
-    // Ctrl+Z / Ctrl+Shift+Z / Ctrl+A / Ctrl+1~4는 여기서 처리하고 호스트(Studio One)에 넘기지 않는다.
+    // ←/→(블록을 골랐을 때), Ctrl+Z / Ctrl+Shift+Z / Ctrl+A / Ctrl+1~4는 여기서 처리하고 호스트(Studio One)에 넘기지 않는다.
     // 그 밖의 키(스페이스 등)는 false를 돌려 호스트가 받는다.
     bool keyPressed(const juce::KeyPress&) override;
     void mouseEnter(const juce::MouseEvent&) override;
@@ -155,6 +156,9 @@ private:
     void showModeMenu();
     void showBlockMenu(const juce::MouseEvent&);
     void startPreview(size_t index);
+    bool stepSelection(int direction);
+    std::optional<size_t> neighbourBlock(size_t from, int direction) const;
+    void revealBlock(const VocalBlock&);
     void requestUndo(bool redo);
     bool historyAllowed() const noexcept { return selection.size() <= 1; }   // 다중 선택 중에는 되돌리기/다시 불가
     void toggleDrift(const BlockPick&);

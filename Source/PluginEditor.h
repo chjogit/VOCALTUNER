@@ -59,7 +59,8 @@ private:
     void undoEdit();
     void redoEdit();
     void revertBlocks(const std::vector<size_t>& indices, bool toFirst);
-    void startBlockPreview(size_t index);
+    void startBlockPreview(size_t index, bool hold = true);
+    void playBlockOnce(size_t index);
     void stopBlockPreview();
     void pollBlockPreview();
     void requestPreviewRender();
@@ -96,8 +97,10 @@ private:
     // 미리 듣기
     std::uint32_t lastProcessCount = 0;
     juce::uint32 lastProcessChangeMs = 0;
+    juce::uint32 fitBarUntilMs = 0;      // 맞추기가 끝난 뒤 막대를 지울 시각
     bool previewByHost = false;          // 호스트 재생을 켜 둔 상태
     bool previewUsesHost = false;        // 누를 때 정한 방식 (호스트 재생 / 플러그인 직접 재생)
+    bool previewHold = true;             // 클릭 홀드(놓으면 멈춤, 끝나면 반복) / 한 번 재생(←/→)
     bool previewWaiting = false;         // 처음 누를 때: 편집 반영 구간 렌더를 기다리는 중
     juce::uint32 previewStartedMs = 0, previewLengthMs = 0;   // 블록 끝에 닿으면 처음부터 다시
     double previewSongStart = 0.0;

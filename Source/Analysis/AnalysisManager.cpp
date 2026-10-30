@@ -341,7 +341,8 @@ void AnalysisManager::startAlignmentAnalysis(juce::ARAAudioSource& source)
 
     pool.addJob([this, sourcePtr = &source, task, features]
     {
-        storeAlignment(sourcePtr, task, task->runAlignment(*features, makeParallelFor()));
+        const auto early = [this, sourcePtr, task](const AlignmentData& spectral) { storeSpectral(sourcePtr, task, spectral); };
+        storeAlignment(sourcePtr, task, task->runAlignment(*features, makeParallelFor(), early));
     });
 }
 
@@ -355,8 +356,17 @@ void AnalysisManager::storeAlignment(juce::ARAAudioSource* source, const std::sh
     it->second.alignmentTask = nullptr;
     if (data)
         it->second.alignment = std::make_shared<const AlignmentData>(std::move(*data));
-    else
-        it->second.alignmentFailed = true;
+    else if (it->second.alignment == nullptr)
+        it->second.alignmentFailed = true;      // 소리 모양 결과가 이미 있으면 그것을 그대로 쓴다
+}
+
+// 가사 인식 전의 결과를 먼저 내놓는다 (진행 표시·맞추기는 이걸로 된다). 작업은 아직 끝나지 않은 상태로 둔다.
+void AnalysisManager::storeSpectral(juce::ARAAudioSource* source, const std::shared_ptr<AnalysisTask>& task, const AlignmentData& data)
+{
+    const std::lock_guard<std::mutex> lock(entriesMutex);
+    const auto it = entries.find(source);
+    if (it != entries.end() && it->second.alignmentTask == task)
+        it->second.alignment = std::make_shared<const AlignmentData>(data);
 }
 
 std::shared_ptr<const AlignmentData> AnalysisManager::getAlignment(juce::ARAAudioSource* source) const
@@ -374,7 +384,7 @@ std::pair<int, int> AnalysisManager::getAlignmentProgress() const
         if (entry.features != nullptr)
         {
             ++total;
-            done += entry.alignment != nullptr ? 1 : 0;
+            done += entry.alignment != nullptr || entry.alignmentFailed ? 1 : 0;   // 실패도 끝난 것으로 (막대가 멈춰 있지 않게)
         }
     return { done, total };
 }

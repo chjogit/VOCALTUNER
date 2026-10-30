@@ -28,6 +28,7 @@ VocalTunerAudioProcessorEditor::VocalTunerAudioProcessorEditor(VocalTunerAudioPr
     pianoRoll.onRedo = [this] { redoEdit(); };
     pianoRoll.onPreviewStart = [this](size_t index) { startBlockPreview(index); };
     pianoRoll.onPreviewStop = [this] { stopBlockPreview(); };
+    pianoRoll.onPreviewOnce = [this](size_t index) { playBlockOnce(index); };
     pianoRoll.onRevertRequested = [this](const std::vector<size_t>& indices, bool toFirst) { revertBlocks(indices, toFirst); };
     pianoRoll.onCutRequested = [this](double songSec, double toleranceSec) { cutBlockAt(songSec, toleranceSec); };
     if (auto* controller = getDocumentController())
@@ -547,15 +548,21 @@ void VocalTunerAudioProcessorEditor::pushTrackPanel(const std::vector<const juce
     const auto& analysis = controller->getAnalysis();
     const auto on = analysis.isAlignmentActive();
     juce::String status = alignmentMessage;
+    auto analysing = false;
     if (on)
     {
         const auto [done, total] = analysis.getAlignmentProgress();
-        if (done < total)
-            status = juce::String::fromUTF8("발음·호흡 분석 중... ") + juce::String(done) + "/" + juce::String(total);
+        analysing = done < total;
+        if (analysing)
+            status = juce::String::fromUTF8("발음·호흡 분석 중 ") + juce::String(done) + "/" + juce::String(total);
         else if (status.isEmpty())
             status = juce::String::fromUTF8("분석 완료");
+        trackPanel.setAnalysisProgress(analysing ? static_cast<double>(done) / juce::jmax(1, total) : -1.0);
     }
     trackPanel.setAlignmentStatus(on, on ? status : juce::String());
+    if (! on)
+        trackPanel.setAnalysisProgress(-1.0);
+    trackPanel.setFitBlocked(analysing);        // 분석이 끝나기 전에는 맞추지 않는다
 
     const auto canEdit = on && active != nullptr && alignment.hasReference() && ! alignment.isReference(active);
     trackPanel.setActiveRoles(active != nullptr ? alignment.settings(active).roles : TrackRoles(), canEdit, referenceLabel(active));
@@ -696,6 +703,8 @@ void VocalTunerAudioProcessorEditor::fitTracks(bool all)
     }
     alignmentMessage.clear();
     alignment.startFit(std::move(targets));     // 진행은 timerCallback -> pollFit
+    fitBarUntilMs = 0;
+    trackPanel.setFitProgress(0.0, juce::String::fromUTF8("준비 중"));
     pollFit();
 }
 
@@ -730,12 +739,22 @@ void VocalTunerAudioProcessorEditor::applyBaseCorrection(juce::ARAAudioSource* s
 void VocalTunerAudioProcessorEditor::pollFit()
 {
     auto* controller = getDocumentController();
+    const auto now = juce::Time::getMillisecondCounter();
     if (controller == nullptr || ! controller->getAlignment().isFitting())
+    {
+        // 짧은 클립은 순식간에 끝나므로 끝난 막대를 잠시 보여 준 뒤 지운다
+        if (fitBarUntilMs != 0 && now >= fitBarUntilMs)
+        {
+            fitBarUntilMs = 0;
+            trackPanel.setFitProgress(-1.0, {});
+        }
         return;
+    }
     const auto status = controller->getAlignment().pollFit();
-    trackPanel.setFitProgress(status.running ? status.progress : -1.0, status.stage);
+    trackPanel.setFitProgress(status.running ? status.progress : 1.0, status.running ? status.stage : juce::String::fromUTF8("완료"));
     if (status.finished)
     {
+        fitBarUntilMs = now + 700;
         alignmentMessage = status.message;
         updatePianoRoll();
     }

@@ -91,6 +91,7 @@ private:
     void startAnalysis(juce::ARAAudioSource&);
     void startAlignmentAnalysis(juce::ARAAudioSource&);   // 메시지 스레드, entriesMutex를 잡지 않은 상태에서 호출
     void storeAlignment(juce::ARAAudioSource*, const std::shared_ptr<AnalysisTask>&, std::optional<AlignmentData>&&);
+    void storeSpectral(juce::ARAAudioSource*, const std::shared_ptr<AnalysisTask>&, const AlignmentData&);
     void cancelAnalysis(juce::ARAAudioSource*);
     void storeResult(juce::ARAAudioSource*, const std::shared_ptr<AnalysisTask>&, AnalysisResult&&);
 

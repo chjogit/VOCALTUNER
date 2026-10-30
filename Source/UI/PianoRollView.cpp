@@ -269,6 +269,9 @@ int digitOf(const juce::KeyPress& key) noexcept
 bool PianoRollView::keyPressed(const juce::KeyPress& key)
 {
     const auto mods = key.getModifiers();
+    const auto code = key.getKeyCode();
+    if (! mods.isAnyModifierKeyDown() && (code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey))
+        return stepSelection(code == juce::KeyPress::leftKey ? -1 : 1);
     if (! mods.isCtrlDown() || mods.isAltDown())
         return false;
     const auto letter = juce::CharacterFunctions::toUpperCase(static_cast<juce::juce_wchar>(key.getKeyCode()));
