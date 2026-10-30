@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  ARA2 기반 보컬 음정·박자 보정 플러그인
+  ARA2 기반 보컬 음정·박자 보정 VST3 플러그인
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
 3. 플러그인은 `C:\Program Files\Common Files\VST3\VocalTuner.vst3`에 설치됩니다.
 4. Studio One을 다시 시작하고, 보컬 이벤트에 **이벤트 FX(ARA)** 로 VocalTuner를 넣습니다.
 
-제거는 **설정 → 앱 → VocalTuner → 제거**에서 할 수 있습니다.
+제거는 '**설정 → 앱 → VocalTuner → 제거**'에서 할 수 있습니다.
 
 ## ✨ 기능
 
