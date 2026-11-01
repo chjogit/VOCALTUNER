@@ -56,14 +56,21 @@ TrackPanel::TrackPanel()
     fitButton.onClick = [this] { if (onFitRequested) onFitRequested(); };
     fitAllButton.onClick = [this] { if (onFitAllRequested) onFitAllRequested(); };
 
-    const char* const names[] = { "박자", "음정", "이음" };
+    const char* const names[] = { "박자", "음정", "이음", "한도" };
     for (size_t i = 0; i < sliders.size(); ++i)
     {
         auto& s = sliders[i];
         s.label = u8(names[i]);
         s.slider.setSliderStyle(juce::Slider::LinearHorizontal);
         s.slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 34, 18);
-        s.slider.setRange(0.0, 100.0, 1.0);
+        if (i == 3)
+        {
+            // 이동 한도: 이보다 크게 옮겨야 하는 음은 그대로 둔다 (2반음 기본, 3반음까지)
+            s.slider.setRange(defaultFitShiftSemitones, maxFitShiftSemitones, 0.1);
+            s.slider.setTooltip(u8("이보다 크게 옮겨야 하는 음은 그대로 둡니다 (반음). 클수록 많이 맞추지만 소리가 상할 수 있습니다"));
+        }
+        else
+            s.slider.setRange(0.0, 100.0, 1.0);
         s.slider.setTextBoxIsEditable(false);   // 글자 입력으로 키보드 포커스를 잡지 않음
         s.slider.setWantsKeyboardFocus(false);
         s.slider.setMouseClickGrabsKeyboardFocus(false);
@@ -75,6 +82,7 @@ TrackPanel::TrackPanel()
             roles.timingAmount = sliders[0].slider.getValue() / 100.0;
             roles.pitchAmount = sliders[1].slider.getValue() / 100.0;
             roles.smoothAmount = sliders[2].slider.getValue() / 100.0;
+            roles.maxShiftSemitones = sliders[3].slider.getValue();
             notifyRoles();
         };
         addAndMakeVisible(s.slider);
@@ -167,7 +175,8 @@ void TrackPanel::setActiveRoles(const TrackRoles& newRoles, bool canEditRoles, c
                       || newRoles.relation != roles.relation
                       || ! juce::approximatelyEqual(newRoles.timingAmount, roles.timingAmount)
                       || ! juce::approximatelyEqual(newRoles.pitchAmount, roles.pitchAmount)
-                      || ! juce::approximatelyEqual(newRoles.smoothAmount, roles.smoothAmount);
+                      || ! juce::approximatelyEqual(newRoles.smoothAmount, roles.smoothAmount)
+                      || ! juce::approximatelyEqual(newRoles.maxShiftSemitones, roles.maxShiftSemitones);
     if (! changed)
         return;
     rolesEditable = canEditRoles;
@@ -188,6 +197,7 @@ void TrackPanel::syncRoleControls()
     sliders[0].slider.setValue(roles.timingAmount * 100.0, juce::dontSendNotification);
     sliders[1].slider.setValue(roles.pitchAmount * 100.0, juce::dontSendNotification);
     sliders[2].slider.setValue(roles.smoothAmount * 100.0, juce::dontSendNotification);
+    sliders[3].slider.setValue(roles.maxShiftSemitones, juce::dontSendNotification);
 }
 
 void TrackPanel::notifyRoles()
@@ -232,7 +242,7 @@ void TrackPanel::layoutDetails()
 {
     const auto visible = ! collapsed && alignmentActive && rolesEditable;
     for (juce::Component* c : std::initializer_list<juce::Component*>{ &timingToggle, &pitchToggle, &relationButton, &fitButton, &fitAllButton,
-                                &cancelButton, &sliders[0].slider, &sliders[1].slider, &sliders[2].slider })
+                                &cancelButton, &sliders[0].slider, &sliders[1].slider, &sliders[2].slider, &sliders[3].slider })
         c->setVisible(false);
     detailsArea = {};
     if (collapsed)
@@ -248,7 +258,7 @@ void TrackPanel::layoutDetails()
         return repaint();
 
     // 역할: 위쪽 틈을 넉넉히 (트랙 목록과 성격이 다름), 슬라이더 사이는 촘촘히
-    detailsArea = juce::Rectangle<int>(16, rowsBottom() + 20, getWidth() - collapsedWidth - 30, 170);
+    detailsArea = juce::Rectangle<int>(16, rowsBottom() + 20, getWidth() - collapsedWidth - 30, 194);
     auto r = detailsArea.withTrimmedTop(22);
     auto buttons = r.removeFromTop(24);
     timingToggle.setBounds(buttons.removeFromLeft(44));
@@ -258,7 +268,7 @@ void TrackPanel::layoutDetails()
     relationButton.setBounds(buttons);
     r.removeFromTop(8);
 
-    const bool show[] = { roles.timing, roles.pitch, roles.pitch };
+    const bool show[] = { roles.timing, roles.pitch, roles.pitch, roles.pitch };
     for (size_t i = 0; i < sliders.size(); ++i)
     {
         if (! show[i])
@@ -322,7 +332,7 @@ void TrackPanel::handleRowClick(size_t i, juce::Point<int> p)
         if (onReferenceChosen)
             onReferenceChosen(row.id, (row.referenceSlot + 1) % 3);
     }
-    else if (detailText(i).contains(p))
+    else if (! alignmentActive && detailText(i).contains(p))   // 가이드 모드에서는 편집으로 고정
     {
         if (onViewChanged)
             onViewChanged(row.id, nextView(row.view));
@@ -347,7 +357,7 @@ juce::String TrackPanel::getTooltip()
         if (alignmentActive && referenceBox(i).contains(p))
             return u8("기준: 누를 때마다 꺼짐 → 네이비 → 베이지. 다른 트랙은 겹치는 기준에 맞춥니다");
         if (detailText(i).contains(p))
-            return u8("눌러서 편집 / 보기 / 숨김");
+            return alignmentActive ? u8("가이드 모드에서는 모든 트랙이 편집으로 고정됩니다") : u8("눌러서 편집 / 보기 / 숨김");
     }
     return {};
 }

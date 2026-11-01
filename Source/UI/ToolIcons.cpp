@@ -212,6 +212,16 @@ void IconTextButton::paintButton(juce::Graphics& g, bool highlighted, bool down)
     g.drawText(getButtonText(), area.withLeft(iconBox.getRight() + iconGap), juce::Justification::centredLeft, false);
 }
 
+std::unique_ptr<juce::Drawable> makeToolIconDrawable(ToolIcon icon, juce::Colour colour)
+{
+    auto drawable = std::make_unique<juce::DrawablePath>();
+    drawable->setPath(makeToolIcon(icon));
+    drawable->setFill(juce::FillType(juce::Colours::transparentBlack));
+    drawable->setStrokeFill(juce::FillType(colour));
+    drawable->setStrokeType(juce::PathStrokeType(1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    return drawable;
+}
+
 void drawGearIcon(juce::Graphics& g, juce::Rectangle<float> area)
 {
     juce::Path p;

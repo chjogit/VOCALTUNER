@@ -35,6 +35,11 @@ public:
     std::optional<AlignmentData> runAlignment(const VocalFeatures&, ParallelFor,
                                               const std::function<void(const AlignmentData&)>& spectralReady = {});
 
+    // 아무 스레드: [start, start+count) 를 좌우로 읽는다 (모노면 같은 값). 취소됐거나 실패하면 0으로 채우고 false
+    bool readStereo(juce::int64 start, int count, float* left, float* right);
+    juce::int64 getNumSamples() const noexcept { return numSamples; }
+    int getSampleRate() const noexcept { return sampleRate; }
+
     // 메시지 스레드. 읽기 중이면 현재 청크가 끝날 때까지 대기
     void cancel();
     bool isCancelled() const noexcept { return cancelled.load(); }

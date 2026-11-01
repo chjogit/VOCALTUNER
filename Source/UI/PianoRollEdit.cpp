@@ -11,7 +11,8 @@ constexpr double maxGainDb = 24.0;
 constexpr double maxShiftSemitones = 48.0;
 constexpr double dbPerPixel = 0.15;
 constexpr float minHitHeight = 14.0f;
-constexpr float jointHandleRadius = 8.0f;
+constexpr float jointHandleMaxRadius = 2.4f, jointHandleMinRadius = 0.9f;
+constexpr float jointHandleWidthShare = 0.2f;    // 이웃 블록 중 짧은 쪽 폭의 이만큼까지
 constexpr float jointLineTolerance = 5.0f;
 
 double smoothstep01(double x) noexcept
@@ -116,6 +117,15 @@ std::vector<juce::Point<float>> PianoRollView::transitionLine(const PitchJoint& 
     return points;
 }
 
+float PianoRollView::jointHandleRadius(const PitchJoint& joint) const
+{
+    const auto& left = (*content.blocks)[joint.left];
+    const auto& right = (*content.blocks)[joint.right];
+    const auto width = std::min(timeX(left.displayEndSec()) - timeX(left.displayStartSec()), timeX(right.displayEndSec()) - timeX(right.displayStartSec()));
+    const auto row = std::abs(midiY(0.0) - midiY(1.0));     // 반음 한 칸의 높이
+    return std::clamp(std::min(jointHandleWidthShare * width, 0.5f * row), jointHandleMinRadius, jointHandleMaxRadius);
+}
+
 std::optional<size_t> PianoRollView::pickTransition(juce::Point<float> plotPos) const
 {
     if (content.blocks == nullptr || mode != Mode::Blob)
@@ -133,7 +143,7 @@ std::optional<size_t> PianoRollView::pickTransition(juce::Point<float> plotPos) 
 
         const auto line = transitionLine(joint);
         const juce::Point<float> handle(xJoint, 0.5f * (line.front().y + line.back().y));
-        auto distance = handle.getDistanceFrom(plotPos) - jointHandleRadius;
+        auto distance = handle.getDistanceFrom(plotPos) - std::max(jointHandleRadius(joint) + 2.0f, 4.0f);
         for (size_t k = 0; ! overBlob && k + 1 < line.size(); ++k)
         {
             juce::Point<float> nearest;

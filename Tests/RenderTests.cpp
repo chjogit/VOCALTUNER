@@ -95,6 +95,59 @@ void testIdentity()
     check(out && out->channels[0] == fx.audio.channels[0], "편집 없음 -> 원본 그대로");
 }
 
+// 두 음 사이에 짧은 틈: 틈을 이어 둔 음정이 편집으로 잡혀 전체를 다시 합성하면 안 된다.
+// 앞 음만 옮기면 뒤 음은 원본 그대로
+void testOnlyEditedPartChanges()
+{
+    AudioPlanes audio;
+    audio.sampleRate = sr;
+    audio.channels = { makeVoice(220.0, 0.8, 3.0) };
+    const auto second = makeVoice(220.0, 1.0, 3.0);
+    const auto shift = static_cast<size_t>(0.84 * sr);       // 두 번째 음: 1.14 ~ 2.14초 (40 ms 틈)
+    for (size_t i = 0; i + shift < audio.channels[0].size(); ++i)
+        audio.channels[0][i + shift] += second[i];
+    const auto features = *extractVocalFeatures(std::vector<double>(audio.channels[0].begin(), audio.channels[0].end()), sr);
+    auto blocks = parseBlocks(features);
+    check(! changesAudio(blocks, features), "짧은 틈이 있어도 편집 없음 = 소리 변화 없음");
+    for (auto& b : blocks)
+        if (! b.isConsonant && b.endSec < 1.0)
+            b.pitchShift = 2.0;
+    const auto out = renderEdited(audio, features, blocks);
+    double later = 0.0;
+    for (auto i = static_cast<size_t>(1.6 * sr); i < audio.length(); ++i)
+        later = std::max(later, static_cast<double>(std::abs(out->channels[0][i] - audio.channels[0][i])));
+    check(out && later < 1e-6, "앞 음만 옮기면 떨어진 뒤 음은 원본 그대로");
+}
+
+// 박자 편집이 문서 어딘가에 있으면 음정만 바꾼 먼 블록도 같은 방식으로 렌더되어야 한다
+// (구간 렌더가 짧아 박자 변화를 못 보고 다른 경로를 타면 미리 듣기와 재생이 달라진다)
+void testTimingElsewhere()
+{
+    AudioPlanes audio;
+    audio.sampleRate = sr;
+    audio.channels = { makeVoice(220.0, 0.8, 4.0) };
+    const auto second = makeVoice(220.0, 0.8, 4.0);
+    const auto shift = static_cast<size_t>(2.0 * sr);
+    for (size_t i = 0; i + shift < audio.channels[0].size(); ++i)
+        audio.channels[0][i + shift] += second[i];
+    const auto features = *extractVocalFeatures(std::vector<double>(audio.channels[0].begin(), audio.channels[0].end()), sr);
+    auto blocks = parseBlocks(features);
+    for (auto& b : blocks)
+    {
+        if (b.isConsonant) continue;
+        if (b.endSec < 1.5) { b.startOffsetSec = 0.03; b.endOffsetSec = 0.03; }   // 앞 음: 박자만
+        else b.pitchShift = 1.5;                                                    // 뒤 음: 음정만
+    }
+    const auto begin = static_cast<size_t>(2.5 * sr), end = static_cast<size_t>(2.9 * sr);
+    const auto part = renderEditedRange(audio, features, blocks, begin, end);
+    const auto full = renderEdited(audio, features, blocks);
+    double worst = 0.0;
+    for (size_t i = 0; i < part->audio.channels[0].size(); ++i)
+        worst = std::max(worst, (double) std::abs(part->audio.channels[0][i] - full->channels[0][part->startSample + i]));
+    std::printf("  박자 편집이 먼 곳에 있을 때 구간/전체 최대 차 %.2e\n", worst);
+    check(worst < 1e-4, "박자 편집이 먼 곳에 있어도 구간 렌더 = 전체 렌더");
+}
+
 void testPitchShift()
 {
     Fixture fx;
@@ -188,6 +241,31 @@ void testRange()
     check(! renderEditedRange(fx.audio, fx.features, fx.blocks, begin, end, cancel).has_value(), "구간 렌더: 취소");
 }
 
+// 박자를 바꾼 구간의 미리 듣기: 구간 렌더가 전체 렌더의 같은 자리와 같고, 스테레오 두 채널이 같은 입력이면 같은 소리
+void testTimingRange()
+{
+    Fixture fx;
+    fx.audio.channels.push_back(fx.audio.channels[0]);
+    for (auto& b : fx.blocks)
+    {
+        b.startOffsetSec = 0.02;
+        b.endOffsetSec = 0.02;
+        b.pitchShift = 1.0;
+    }
+    const auto begin = static_cast<size_t>(0.8 * sr), end = static_cast<size_t>(1.2 * sr);
+    const auto part = renderEditedRange(fx.audio, fx.features, fx.blocks, begin, end);
+    const auto full = renderEdited(fx.audio, fx.features, fx.blocks);
+    double maxDiff = 0.0, channelDiff = 0.0;
+    for (size_t i = 0; i < part->audio.channels[0].size(); ++i)
+    {
+        maxDiff = std::max(maxDiff, (double) std::abs(part->audio.channels[0][i] - full->channels[0][part->startSample + i]));
+        channelDiff = std::max(channelDiff, (double) std::abs(part->audio.channels[0][i] - part->audio.channels[1][i]));
+    }
+    std::printf("  구간/전체 최대 차 %.2e, 채널 차 %.2e\n", maxDiff, channelDiff);
+    check(maxDiff < 1e-4, "박자 변경: 구간 렌더 = 전체 렌더의 같은 자리");
+    check(channelDiff == 0.0, "박자 변경: 같은 두 채널은 같은 소리");
+}
+
 void testTimeMap()
 {
     Fixture fx;
@@ -204,12 +282,15 @@ int main()
 {
     testTimeMap();
     testIdentity();
+    testOnlyEditedPartChanges();
     testPitchShift();
     testGain();
     testTimeShift();
     testLoudness();
     testCancelAndStereo();
     testRange();
+    testTimingRange();
+    testTimingElsewhere();
     std::printf(failures == 0 ? "ALL PASS\n" : "%d FAILED\n", failures);
     return failures == 0 ? 0 : 1;
 }

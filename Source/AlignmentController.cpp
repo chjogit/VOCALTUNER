@@ -1,4 +1,6 @@
 #include "AlignmentController.h"
+#include "BlockHistory.h"
+#include "Alignment/GuidedTiming.h"
 #include <algorithm>
 
 namespace
@@ -130,6 +132,8 @@ AlignmentController::Prepared AlignmentController::prepare(const juce::ARAPlayba
     p.targetData = analysis.getAlignment(sourceOf(target));
     p.referenceData = analysis.getAlignment(sourceOf(p.reference));
     p.ready = p.targetData && p.referenceData && analysis.getBlocks(sourceOf(target)) && analysis.getBlocks(sourceOf(p.reference));
+    if (const auto features = analysis.getFeatures(sourceOf(p.reference)))
+        p.referenceIsMix = looksLikeMix(features->rms);
     p.ok = true;
     return p;
 }
@@ -146,7 +150,7 @@ const AlignResult* AlignmentController::cachedMap(const juce::ARAPlaybackRegion*
     return valid ? &c.result : nullptr;
 }
 
-AlignmentController::AlignPlan AlignmentController::planFor(const juce::ARAPlaybackRegion* target, const Prepared& p)
+AlignmentController::AlignPlan AlignmentController::planFor(const juce::ARAPlaybackRegion* target, const Prepared& p, bool withMelody) const
 {
     AlignPlan plan;
     plan.referenceData = p.referenceData;
@@ -158,19 +162,48 @@ AlignmentController::AlignPlan AlignmentController::planFor(const juce::ARAPlayb
     plan.anchorCount = plan.guide.empty() ? 0 : anchors.size();
     if (! plan.guide.empty())
         plan.options.maxShiftSec = 0.4;      // 가사로 대략 맞춰 두었으므로 좁게 탐색
+    plan.referenceIsMix = p.referenceIsMix;
+    plan.referenceOffset = offsetOf(p.reference);
+    plan.targetOffset = offsetOf(target);
+    if (withMelody)
+    {
+        plan.referenceReader = std::make_shared<AnalysisTask>(*sourceOf(p.reference), false);
+        plan.targetFeatures = analysis.getFeatures(sourceOf(target));
+    }
     return plan;
 }
 
-AlignResult AlignmentController::runPlan(AlignPlan& plan)
+AlignmentController::Computed AlignmentController::runPlan(AlignPlan& plan)
 {
     if (! plan.guide.empty())
         plan.options.guide = &plan.guide;
-    return alignToReference(plan.reference, plan.target, plan.options);
+    Computed out { alignToReference(plan.reference, plan.target, plan.options), nullptr };
+    if (! out.result.ok)
+        return out;
+    // 소리 모양 정렬(DTW)은 반주·번짐·발음 차이까지 맞추려 들어 박자를 0.1~1초씩 엉뚱하게 민다 (분리 보컬 기준에서
+    // 블록 94%를 늘이고 줄임). 박자는 따라 부른 음으로 찾고(확실한 곳만), 그럴 수 없는 동기 맞추기에서는 옮기지 않는다
+    out.result.targetToReference = {};
+    if (plan.referenceReader != nullptr && plan.targetFeatures != nullptr)
+    {
+        auto& reader = *plan.referenceReader;
+        const StereoReader read = [&reader](int64_t start, int count, float* l, float* r) { reader.readStereo(start, count, l, r); };
+        const auto cancelled = [&plan] { return plan.cancelled && plan.cancelled(); };
+        GuidedTimingOptions timing;
+        timing.shouldCancel = cancelled;
+        out.timingFound = true;
+        out.result.targetToReference = guidedTimeMap(reader.getNumSamples(), reader.getSampleRate(), read, *plan.targetFeatures,
+                                                     plan.targetOffset, plan.referenceOffset, timing);
+        if (plan.referenceIsMix)
+            out.melody = std::make_shared<const MelodyTrack>(melodyForTarget(reader.getNumSamples(), reader.getSampleRate(), read, *plan.targetFeatures,
+                                                                         plan.targetOffset, out.result.targetToReference, plan.referenceOffset, cancelled));
+    }
+    return out;
 }
 
-void AlignmentController::storeMap(const juce::ARAPlaybackRegion* target, const Prepared& p, size_t anchorCount, AlignResult result)
+void AlignmentController::storeMap(const juce::ARAPlaybackRegion* target, const Prepared& p, size_t anchorCount, Computed computed)
 {
-    cache[target] = { p.reference, p.referenceData, p.targetData, offsetOf(p.reference), offsetOf(target), std::move(result), anchorCount };
+    cache[target] = { p.reference, p.referenceData, p.targetData, offsetOf(p.reference), offsetOf(target),
+                      std::move(computed.result), anchorCount, std::move(computed.melody), computed.timingFound };
 }
 
 AlignmentController::Outcome AlignmentController::fit(const juce::ARAPlaybackRegion* target, bool newBaseline, bool beginGesture)
@@ -182,7 +215,7 @@ AlignmentController::Outcome AlignmentController::fit(const juce::ARAPlaybackReg
         return { false, u8("발음·호흡 분석이 아직 끝나지 않았습니다") };
     if (cachedMap(target, p) == nullptr)
     {
-        auto plan = planFor(target, p);
+        auto plan = planFor(target, p, false);   // 멜로디 추출은 백그라운드 맞추기에서만 (여기선 음정을 옮기지 않음)
         storeMap(target, p, plan.anchorCount, runPlan(plan));
     }
     return apply(target, p, newBaseline, beginGesture);
@@ -206,6 +239,34 @@ juce::String AlignmentController::changeSummary(const std::vector<VocalBlock>& b
     return u8("박자 ") + sign(juce::roundToInt(1000.0 * timing / n)) + "ms" + u8(" · 음정 ") + sign(juce::roundToInt(cents / n)) + juce::String::fromUTF8("¢");
 }
 
+namespace
+{
+int movedBlocks(const std::vector<VocalBlock>& before, const std::vector<BlockUpdate>& updates)
+{
+    return static_cast<int>(std::count_if(updates.begin(), updates.end(), [&before](const BlockUpdate& u)
+    {
+        return u.index < before.size() && std::abs(u.block.pitchShift - before[u.index].pitchShift) > 0.01;
+    }));
+}
+}
+
+namespace
+{
+// 맞추기의 출발점: 지금 블록들을 처음 분석 상태로 되돌린 것 (여러 번 눌러도 맞춤이 겹쳐 쌓이지 않는다)
+std::shared_ptr<const std::vector<VocalBlock>> originalStateOf(const std::vector<VocalBlock>& current, const BlockSnapshot& original,
+                                                               bool baseCorrection)
+{
+    if (original == nullptr)
+        return std::make_shared<const std::vector<VocalBlock>>(current);
+    const auto baseTidy = baseCorrection ? defaultTidyAmount : 0.0;
+    std::vector<VocalBlock> out;
+    out.reserve(current.size());
+    for (const auto& block : current)
+        out.push_back(firstStateOf(block, *original, baseTidy));
+    return std::make_shared<const std::vector<VocalBlock>>(std::move(out));
+}
+} // namespace
+
 AlignmentController::Outcome AlignmentController::apply(const juce::ARAPlaybackRegion* target, const Prepared& p, bool newBaseline, bool beginGesture)
 {
     const auto* aligned = cachedMap(target, p);
@@ -219,10 +280,14 @@ AlignmentController::Outcome AlignmentController::apply(const juce::ARAPlaybackR
         return { false, u8("발음·호흡 분석이 아직 끝나지 않았습니다") };
     auto& baseline = baselines[target];
     if (newBaseline || baseline == nullptr)
-        baseline = targetBlocks;
+        baseline = originalStateOf(*targetBlocks, analysis.getOriginalBlocks(targetSource), settings(target).baseCorrection);
 
+    static const MelodyTrack noMelody;
+    const auto& melody = cache[target].melody;
+    const auto* melodyToUse = p.referenceIsMix ? (melody != nullptr ? melody.get() : &noMelody) : nullptr;
+    const auto referenceCurve = p.referenceIsMix ? nullptr : analysis.getFeatures(sourceOf(p.reference));
     const auto updates = fitToReference(*baseline, offsetOf(target), aligned->targetToReference, *referenceBlocks,
-                                        offsetOf(p.reference), settings(target).roles);
+                                        offsetOf(p.reference), settings(target).roles, melodyToUse, referenceCurve.get());
     if (beginGesture)
     {
         if (onBeforeApply)
@@ -232,7 +297,10 @@ AlignmentController::Outcome AlignmentController::apply(const juce::ARAPlaybackR
     if (! analysis.replaceBlocks(targetSource, updates))
         return { false, u8("블록을 바꾸지 못했습니다") };
     const auto anchorCount = cache[target].anchorCount;
-    const auto how = anchorCount > 0 ? u8(" · 가사 앵커 ") + juce::String((int) anchorCount) + u8("개")
-                                     : (p.referenceData->whisperUsed ? u8(" · 가사 겹침 부족") : u8(" · 소리 모양으로 맞춤"));
+    auto how = anchorCount > 0 ? u8(" · 가사 앵커 ") + juce::String((int) anchorCount) + u8("개")
+                               : (p.referenceData->whisperUsed ? u8(" · 가사 겹침 부족") : u8(" · 소리 모양으로 맞춤"));
+    if (p.referenceIsMix)
+        how << (melody != nullptr ? u8(" · 원곡 음원: 확실한 음만 ") + juce::String(movedBlocks(*baseline, updates)) + u8("곳 맞춤")
+                                  : u8(" · 원곡 음원: 음정은 ‘맞추기’로 다시 맞추세요"));
     return { true, u8("맞춤 완료 · ") + changeSummary(*targetBlocks, updates) + how };
 }

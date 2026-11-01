@@ -51,6 +51,7 @@ struct PitchScale
 {
     int root = -1;          // 0 = C ... 11 = B, -1 = 반음(크로매틱)
     bool minor = false;
+    bool local = false;     // 자동: 조바꿈이 이어지는 곡용. 블록마다 앞뒤 노래의 음 분포로 조를 정한다 (root/minor 무시)
 };
 struct PitchBalance
 {
@@ -60,6 +61,10 @@ struct PitchBalance
     double toleranceCents = 0.0;                // 이미 이 안에 있는 블롭은 중심 음정을 건드리지 않음 (0 = 끔)
 };
 int nearestScaleNote(double midi, const PitchScale&) noexcept;
+// 블록마다 그 시점의 조 (장조 으뜸음 0..11, 나란한 단조는 같은 음계). 앞뒤 localKeySeconds 안 유성 블록의 음 길이로 고른다.
+// 유성 블록이 없으면 -1.
+constexpr double localKeySeconds = 8.0;
+std::vector<int> localKeyRoots(const std::vector<VocalBlock>&);
 std::vector<BlockUpdate> withPitchBalance(const std::vector<VocalBlock>&, const std::vector<size_t>& indices, const PitchBalance&);
 
 // 기초 자동 보정(tidy) 켜기/끄기. 값이 바뀌어야 하는 블록만 돌려준다 (없으면 빈 목록)
@@ -77,6 +82,9 @@ struct PitchJoint
 };
 std::vector<PitchJoint> findPitchJoints(const std::vector<VocalBlock>& blocks);
 double effectivePitchShift(const std::vector<VocalBlock>& blocks, size_t index, double displaySec) noexcept;
+// index에서 direction(+1/-1) 쪽으로 가장 가까운 유성 블롭, 두 유성 블롭 사이의 이음 (멀면 없음)
+std::optional<size_t> neighbourVoicedBlock(const std::vector<VocalBlock>& blocks, size_t index, int direction);
+std::optional<PitchJoint> pitchJointBetween(const std::vector<VocalBlock>& blocks, size_t left, size_t right);
 
 // 음정의 가운데(가장 가까운 반음)로 정렬한 사본. 자음 블록은 그대로.
 VocalBlock alignedToNoteCenter(const VocalBlock&) noexcept;

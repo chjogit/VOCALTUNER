@@ -107,6 +107,6 @@ private:
         juce::Slider slider;
         juce::String label;
     };
-    std::array<LabeledSlider, 3> sliders;   // 박자 / 음정 / 이음
+    std::array<LabeledSlider, 4> sliders;   // 박자 / 음정 / 이음 / 이동 한도(반음)
     juce::Rectangle<int> detailsArea;
 };

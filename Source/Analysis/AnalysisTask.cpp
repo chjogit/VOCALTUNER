@@ -1,5 +1,6 @@
 #include "AnalysisTask.h"
 #include "WhisperRunner.h"
+#include <algorithm>
 
 namespace
 {
@@ -90,6 +91,22 @@ bool AnalysisTask::readChunk(juce::AudioBuffer<float>& chunk, juce::int64 start,
     if (isCancelled() || reader == nullptr)
         return false;
     return reader->read(chunk.getArrayOfWritePointers(), chunk.getNumChannels(), start, count);
+}
+
+bool AnalysisTask::readStereo(juce::int64 start, int count, float* left, float* right)
+{
+    std::fill(left, left + count, 0.0f);
+    std::fill(right, right + count, 0.0f);
+    const auto first = juce::jmax<juce::int64>(0, start), last = juce::jmin(numSamples, start + count);
+    if (last <= first)
+        return true;
+    juce::AudioBuffer<float> chunk(juce::jmax(1, source.getChannelCount()), static_cast<int>(last - first));
+    if (! readChunk(chunk, first, chunk.getNumSamples()))
+        return false;
+    const auto offset = static_cast<size_t>(first - start);
+    std::copy_n(chunk.getReadPointer(0), chunk.getNumSamples(), left + offset);
+    std::copy_n(chunk.getReadPointer(juce::jmin(1, chunk.getNumChannels() - 1)), chunk.getNumSamples(), right + offset);
+    return true;
 }
 
 void AnalysisTask::cancel()

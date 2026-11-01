@@ -37,6 +37,7 @@ PitchBalancePanel::PitchBalancePanel()
 
     const char* const names[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
     keyBox.addItem(u8("반음 (조 없음)"), 1);
+    keyBox.addItem(u8("자동 (조바꿈)"), autoKeyId);
     for (int i = 0; i < 12; ++i)
         keyBox.addItem(names[i], i + 2);
     noFocus(keyBox);
@@ -46,7 +47,8 @@ PitchBalancePanel::PitchBalancePanel()
             return;
         if (onGestureBegin)
             onGestureBegin();
-        balance.scale.root = keyBox.getSelectedId() - 2;
+        balance.scale.local = keyBox.getSelectedId() == autoKeyId;
+        balance.scale.root = balance.scale.local ? -1 : keyBox.getSelectedId() - 2;
         minorToggle.setEnabled(balance.scale.root >= 0);
         notify();
     };
@@ -81,7 +83,7 @@ void PitchBalancePanel::setBalance(const PitchBalance& newBalance)
     balance = newBalance;
     centerSlider.setValue(balance.center * 100.0, juce::dontSendNotification);
     driftSlider.setValue(balance.drift * 100.0, juce::dontSendNotification);
-    keyBox.setSelectedId(balance.scale.root + 2, juce::dontSendNotification);
+    keyBox.setSelectedId(balance.scale.local ? autoKeyId : balance.scale.root + 2, juce::dontSendNotification);
     minorToggle.setToggleState(balance.scale.minor, juce::dontSendNotification);
     minorToggle.setEnabled(balance.scale.root >= 0);
     toleranceToggle.setToggleState(balance.toleranceCents > 0.0, juce::dontSendNotification);

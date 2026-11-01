@@ -1,5 +1,6 @@
 #include "ReferenceFit.h"
 #include <algorithm>
+#include <optional>
 #include <cmath>
 
 VocalBlock withTimingFitted(const VocalBlock& block, double targetOffsetSec, const TimeMap& map, double amount)
@@ -39,6 +40,28 @@ double referencePitchOver(const std::vector<VocalBlock>& ref, double refOffset, 
         weight += overlap;
     }
     return weight > 0.0 ? sum / weight : -1.0;
+}
+
+double referenceCurvePitchOver(const VocalFeatures& curve, double startSec, double endSec, double expectedMidi)
+{
+    const auto hop = curve.framePeriodMs / 1000.0;
+    const auto first = static_cast<size_t>(std::max(0.0, std::ceil(startSec / hop)));
+    const auto last = std::min(curve.size(), static_cast<size_t>(std::max(0.0, std::floor(endSec / hop))) + 1);
+    if (last <= first)
+        return -1.0;
+    std::vector<double> voiced;
+    for (auto t = first; t < last; ++t)
+        if (curve.midiF0[t] > 0.0)
+        {
+            // 분리 보컬은 프레임마다 옥타브가 튀기도 한다: 기대 음에서 ±6반음 안으로 모두 접는다
+            const auto midi = curve.midiF0[t];
+            voiced.push_back(expectedMidi > 0.0 ? midi - 12.0 * std::round((midi - expectedMidi) / 12.0) : midi);
+        }
+    if (voiced.size() < 3 || 2 * voiced.size() < last - first)
+        return -1.0;
+    const auto mid = voiced.begin() + static_cast<long>(voiced.size() / 2);
+    std::nth_element(voiced.begin(), mid, voiced.end());
+    return *mid;
 }
 
 double snappedPitchShift(double targetCentre, double referenceMidi, PitchRelation relation, double amount)
@@ -90,8 +113,29 @@ double typicalInterval(const std::vector<VocalBlock>& baseline, double targetOff
     return relation == PitchRelation::Unison ? 12.0 * std::round(median / 12.0) : std::round(median);
 }
 
+// 반주 섞인 원곡: 뽑은 멜로디에서 근거가 충분한 블록만 옮긴다
+void fitPitchToMelody(std::vector<VocalBlock>& fitted, const std::vector<VocalBlock>& baseline, double targetOffset, const TimeMap& map,
+                      const MelodyTrack& melody, double referenceOffset, const TrackRoles& roles)
+{
+    const MelodyGate gate;
+    for (size_t i = 0; i < fitted.size(); ++i)
+    {
+        auto& block = fitted[i];
+        if (block.isConsonant)
+            continue;
+        block.transitionAfter = std::clamp(roles.smoothAmount, 0.0, 1.0);
+        const auto centre = baseline[i].baseMidi + baseline[i].pitchOffset;
+        const auto [start, end] = referenceSpan(baseline[i], targetOffset, map);
+        const auto referenceMidi = melodyPitchOver(melody, start - referenceOffset, end - referenceOffset, gate);
+        if (referenceMidi < 0.0 || std::abs(referenceMidi - centre) > gate.maxShiftSemitones)
+            continue;
+        block.pitchShift = snappedPitchShift(centre, referenceMidi, roles.relation, roles.pitchAmount);
+    }
+}
+
 void fitPitch(std::vector<VocalBlock>& fitted, const std::vector<VocalBlock>& baseline, double targetOffset, const TimeMap& map,
-              const std::vector<VocalBlock>& referenceBlocks, double referenceOffset, const TrackRoles& roles)
+              const std::vector<VocalBlock>& referenceBlocks, double referenceOffset, const TrackRoles& roles,
+              const VocalFeatures* curve)
 {
     const auto interval = typicalInterval(baseline, targetOffset, map, referenceBlocks, referenceOffset, roles.relation);
     for (size_t i = 0; i < fitted.size(); ++i)
@@ -102,16 +146,50 @@ void fitPitch(std::vector<VocalBlock>& fitted, const std::vector<VocalBlock>& ba
         block.transitionAfter = std::clamp(roles.smoothAmount, 0.0, 1.0);
         const auto centre = baseline[i].baseMidi + baseline[i].pitchOffset;
         const auto [start, end] = referenceSpan(baseline[i], targetOffset, map);
-        const auto referenceMidi = referencePitchOver(referenceBlocks, referenceOffset, start, end, centre - interval);
+        // 곡선이 있으면 그 구간의 실제 음(중앙값)을 쓴다: 블록 경계가 달라 이웃 음이 섞이는 일을 막는다
+        auto referenceMidi = curve != nullptr ? referenceCurvePitchOver(*curve, start - referenceOffset, end - referenceOffset, centre - interval) : -1.0;
+        if (referenceMidi < 0.0)
+            referenceMidi = referencePitchOver(referenceBlocks, referenceOffset, start, end, centre - interval);
         if (referenceMidi < 0.0)
             continue;
-        block.pitchShift = snappedPitchShift(centre, referenceMidi, roles.relation, roles.pitchAmount);
+        // 귀에 안 들리는 차이(8센트 미만)는 옮기지 않는다: 원래 소리를 그대로 두는 편이 음질에 낫다
+        const auto shift = snappedPitchShift(centre, referenceMidi, roles.relation, roles.pitchAmount);
+        // 한도를 넘게 다르면 꺾임·장식음이 기준과 다르게 불린 것: 억지로 옮기면 소리가 깨진다
+        const auto limit = std::clamp(roles.maxShiftSemitones, 0.0, maxFitShiftSemitones);
+        if (std::abs(shift) >= 0.08 && std::abs(shift) <= limit + 1e-9 && ! isRunPassingNote(baseline, i))
+            block.pitchShift = shift;
     }
 }
 } // namespace
 
+namespace
+{
+bool isShortVoiced(const VocalBlock& b) { return ! b.isConsonant && b.endSec - b.startSec < runPassingNoteSec; }
+
+// index에서 direction 쪽으로 가장 가까운 유성 블롭. 맞닿아 있지 않으면 nullopt
+std::optional<size_t> touchingVoiced(const std::vector<VocalBlock>& blocks, size_t index, int direction)
+{
+    for (auto i = static_cast<long>(index) + direction; i >= 0 && i < static_cast<long>(blocks.size()); i += direction)
+    {
+        const auto& n = blocks[static_cast<size_t>(i)];
+        if (n.isConsonant)
+            continue;
+        const auto& b = blocks[index];
+        const auto gap = direction < 0 ? b.startSec - n.endSec : n.startSec - b.endSec;
+        return gap < runNeighbourGapSec ? std::optional<size_t>(static_cast<size_t>(i)) : std::nullopt;
+    }
+    return std::nullopt;
+}
+} // namespace
+
+bool isRunPassingNote(const std::vector<VocalBlock>& blocks, size_t index)
+{
+    return isShortVoiced(blocks[index]) && touchingVoiced(blocks, index, -1) && touchingVoiced(blocks, index, +1);
+}
+
 std::vector<BlockUpdate> fitToReference(const std::vector<VocalBlock>& baseline, double targetOffset, const TimeMap& map,
-                                        const std::vector<VocalBlock>& referenceBlocks, double referenceOffset, const TrackRoles& roles)
+                                        const std::vector<VocalBlock>& referenceBlocks, double referenceOffset, const TrackRoles& roles,
+                                        const MelodyTrack* melody, const VocalFeatures* referenceCurve)
 {
     auto fitted = baseline;
     if (roles.timing && ! map.empty())
@@ -121,8 +199,10 @@ std::vector<BlockUpdate> fitToReference(const std::vector<VocalBlock>& baseline,
         repairOrder(fitted);
     }
 
-    if (roles.pitch)
-        fitPitch(fitted, baseline, targetOffset, map, referenceBlocks, referenceOffset, roles);
+    if (roles.pitch && melody != nullptr)
+        fitPitchToMelody(fitted, baseline, targetOffset, map, *melody, referenceOffset, roles);
+    else if (roles.pitch)
+        fitPitch(fitted, baseline, targetOffset, map, referenceBlocks, referenceOffset, roles, referenceCurve);
 
     std::vector<BlockUpdate> updates;
     for (size_t i = 0; i < fitted.size(); ++i)

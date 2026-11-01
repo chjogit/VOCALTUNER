@@ -341,8 +341,10 @@ void VocalTunerAudioProcessorEditor::updatePianoRoll()
     if (! regionChanged && features == shownFeatures && blocks == shownBlocks && juce::exactlyEqual(start, shownStart) && juce::exactlyEqual(duration, shownDuration))
         return;
 
-    // 같은 클립의 분석이 끝났을 때와 클립이 바뀌었을 때만 화면을 맞춤
-    pianoRoll.setContent(std::move(content), regionChanged || features != shownFeatures);
+    // 화면은 분석 결과가 처음 보일 때만 맞춘다. 다른 트랙으로 넘어가도 보던 시간·음 높이 범위는 그대로
+    // (트랙끼리 같은 구간을 비교하려고 넘어가는 것이므로)
+    pianoRoll.setContent(std::move(content), ! viewFitted && features != nullptr);
+    viewFitted = viewFitted || features != nullptr;
     shownRegion = region;
     shownFeatures = features;
     shownBlocks = blocks;
@@ -657,9 +659,15 @@ void VocalTunerAudioProcessorEditor::wireTrackPanel()
     trackPanel.onAlignmentToggled = [this](bool on)
     {
         if (auto* controller = getDocumentController())
+        {
             controller->getAnalysis().setAlignmentActive(on);
+            if (on)     // 가이드 모드: 모든 트랙을 편집으로 고정 (보기만/숨김 트랙은 맞출 수 없어 헷갈림)
+                for (const auto* region : liveRegions)
+                    controller->getAlignment().settings(region).view = TrackView::Editable;
+        }
         alignmentMessage.clear();
         refreshTracks();
+        updatePianoRoll();
     };
     trackPanel.onRolesGestureBegin = [this] { beginEditGesture(); };
     trackPanel.onRolesChanged = [this](const TrackRoles& roles)

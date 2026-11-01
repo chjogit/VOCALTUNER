@@ -342,6 +342,26 @@ int main()
             balance.toleranceCents = 25.0;
             off.pitchOffset = 0.2;
             check(near(withPitchBalance({ off }, { 0 }, balance)[0].block.tidyAmount, 0.0), "blobs within the tolerance are left alone");
+            // 조바꿈: 앞 20초는 C장조, 뒤 20초는 E장조 음만 부른 곡
+            std::vector<VocalBlock> song;
+            const int cNotes[] = { 60, 62, 64, 65, 67, 69, 71 }, eNotes[] = { 64, 66, 68, 69, 71, 73, 75 };
+            for (int k = 0; k < 40; ++k)
+            {
+                VocalBlock n;
+                n.startSec = k;
+                n.endSec = k + 0.8;
+                n.baseMidi = k < 20 ? cNotes[k % 7] : eNotes[k % 7];
+                song.push_back(n);
+            }
+            const auto roots = localKeyRoots(song);
+            check(roots[3] == 0 && roots[36] == 4, "local key follows the key change (C major, then E major)");
+            song[36].baseMidi = 66;
+            song[36].pitchOffset = -0.4;    // 65.6: C장조라면 F(65), E장조에서는 F#(66)
+            PitchBalance automatic;
+            automatic.center = 1.0;
+            automatic.scale.local = true;
+            check(withPitchBalance(song, { 36 }, automatic)[0].block.centerTargetMidi == -1,
+                  "automatic key keeps F# in the E major part (target = its own note)");
 
             // 느린 흐름(0.5 반음 기울기) + 빠른 비브라토: 흐름만 줄고 비브라토 폭은 남는다
             auto drifting = flatFeatures(200);

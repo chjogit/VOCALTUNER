@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(VocalTuner VERSION 1.0.0)
+project(VocalTuner VERSION 1.1.11)
 
 option(VOCALTUNER_BUILD_TESTS "Build unit tests" ON)
 # ON이면 JUCE 없이 vocaltuner_core + 테스트만 빌드 (Linux CI/검증용)
@@ -22,9 +22,6 @@ add_library(world_harvest STATIC
     ${world_SOURCE_DIR}/src/common.cpp
     ${world_SOURCE_DIR}/src/matlabfunctions.cpp
     ${world_SOURCE_DIR}/src/fft.cpp
-    ${world_SOURCE_DIR}/src/cheaptrick.cpp
-    ${world_SOURCE_DIR}/src/d4c.cpp
-    ${world_SOURCE_DIR}/src/synthesis.cpp
     ${world_SOURCE_DIR}/src/stonemask.cpp)
 target_include_directories(world_harvest SYSTEM PUBLIC ${world_SOURCE_DIR}/src)
 set_target_properties(world_harvest PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -32,18 +29,29 @@ set_target_properties(world_harvest PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # JUCE 비의존 분석 코어 (플러그인과 테스트가 공유)
 add_library(vocaltuner_core STATIC
     Source/Analysis/VocalFeatures.cpp
+    Source/Analysis/StablePitch.cpp
     Source/Analysis/BlockParser.cpp
     Source/Analysis/BlockEditing.cpp
     Source/Analysis/BlockTransforms.cpp
+    Source/Analysis/PitchFlow.cpp
     Source/Analysis/BlockHistory.cpp
     Source/Alignment/SpectralFrames.cpp
     Source/Alignment/SectionClassifier.cpp
     Source/Alignment/TimeWarp.cpp
     Source/Alignment/ReferenceFit.cpp
+    Source/Alignment/MixSpectrum.cpp
+    Source/Alignment/GuidedMelody.cpp
+    Source/Alignment/MixReference.cpp
+    Source/Alignment/GuidedTiming.cpp
     Source/Alignment/WordAnchors.cpp
     Source/Render/EditTimeMap.cpp
+    Source/Render/EditGrid.cpp
     Source/Render/EditRenderer.cpp
-    Source/Render/SpectralDiff.cpp)
+    Source/Render/SpectralDiff.cpp
+    Source/Render/Psola.cpp
+    Source/Render/PsolaGrain.cpp
+    Source/Render/PsolaWarp.cpp
+    Source/Render/ConsonantShield.cpp)
 target_include_directories(vocaltuner_core PUBLIC Source/Analysis Source/Alignment Source/Render)
 target_include_directories(vocaltuner_core PUBLIC Source/UI)
 target_link_libraries(vocaltuner_core PUBLIC world_harvest)
@@ -181,6 +189,13 @@ if(VOCALTUNER_BUILD_TESTS)
     endif()
     add_test(NAME AlignmentTests COMMAND AlignmentTests)
 
+    add_executable(GuidedMelodyTests Tests/GuidedMelodyTests.cpp)
+    target_link_libraries(GuidedMelodyTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(GuidedMelodyTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME GuidedMelodyTests COMMAND GuidedMelodyTests)
+
     add_executable(RenderTests Tests/RenderTests.cpp)
     target_link_libraries(RenderTests PRIVATE vocaltuner_core)
     if(MSVC)
@@ -201,6 +216,41 @@ if(VOCALTUNER_BUILD_TESTS)
         target_compile_options(PitchSimilarityTests PRIVATE /utf-8)
     endif()
     add_test(NAME PitchSimilarityTests COMMAND PitchSimilarityTests)
+
+    add_executable(PsolaTests Tests/PsolaTests.cpp)
+    target_link_libraries(PsolaTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(PsolaTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME PsolaTests COMMAND PsolaTests)
+
+    add_executable(PsolaWarpTests Tests/PsolaWarpTests.cpp)
+    target_link_libraries(PsolaWarpTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(PsolaWarpTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME PsolaWarpTests COMMAND PsolaWarpTests)
+
+    add_executable(StablePitchTests Tests/StablePitchTests.cpp)
+    target_link_libraries(StablePitchTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(StablePitchTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME StablePitchTests COMMAND StablePitchTests)
+
+    add_executable(PitchFlowTests Tests/PitchFlowTests.cpp)
+    target_link_libraries(PitchFlowTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(PitchFlowTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME PitchFlowTests COMMAND PitchFlowTests)
+
+    add_executable(ConsonantShieldTests Tests/ConsonantShieldTests.cpp)
+    target_link_libraries(ConsonantShieldTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(ConsonantShieldTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME ConsonantShieldTests COMMAND ConsonantShieldTests)
 
     add_executable(SpectralDiffTests Tests/SpectralDiffTests.cpp)
     target_link_libraries(SpectralDiffTests PRIVATE vocaltuner_core)
