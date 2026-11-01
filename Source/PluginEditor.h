@@ -93,6 +93,7 @@ private:
     std::optional<double> pendingSeekSec;
     double snapshotTimeAtSeek = 0.0;
     double shownStart = 0.0, shownDuration = 0.0;
+    bool viewFitted = false;            // 피아노 롤 화면을 한 번이라도 내용에 맞췄는지
 
     // 미리 듣기
     std::uint32_t lastProcessCount = 0;

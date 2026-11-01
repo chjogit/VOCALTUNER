@@ -1,4 +1,5 @@
 #include "BlockParser.h"
+#include "StablePitch.h"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -238,16 +239,7 @@ struct RegionBlocks
 
 void fillPitchStats(const VocalFeatures& f, FrameRange range, VocalBlock& block)
 {
-    std::vector<double> voiced;
-    for (auto i = range.begin; i < range.end; ++i)
-        if (isVoiced(f, i))
-            voiced.push_back(f.midiF0[i]);
-
-    std::nth_element(voiced.begin(), voiced.begin() + static_cast<long>(voiced.size() / 2), voiced.end());
-    auto median = voiced[voiced.size() / 2];
-    if (voiced.size() % 2 == 0)   // numpy median: 짝수 개면 가운데 두 값의 평균
-        median = 0.5 * (median + *std::max_element(voiced.begin(), voiced.begin() + static_cast<long>(voiced.size() / 2)));
-
+    const auto median = medianOf(centreMidiFrames(f, range.begin, range.end));
     block.baseMidi = static_cast<int>(std::lround(median));
     block.pitchOffset = median - block.baseMidi;
 }

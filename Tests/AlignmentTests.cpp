@@ -264,5 +264,41 @@ int main()
         check(keeps, "harmony follows the reference contour through an octave error");
     }
 
+    {
+        // 깨끗한 레퍼런스 곡선: 레퍼런스 블록 경계가 타깃과 달라 이웃 음(65)이 섞여도, 그 구간의 실제 음(62)에 맞춘다
+        VocalFeatures curve;
+        for (int i = 0; i < 400; ++i)
+        {
+            curve.timeSec.push_back(i * 0.005);
+            curve.midiF0.push_back(i < 100 ? 0.0 : (i < 300 ? 62.0 : 65.0));
+            curve.rms.push_back(0.5);
+        }
+        check(near(referenceCurvePitchOver(curve, 0.6, 1.4, 62.0), 62.0), "curve median over the span");
+        check(referenceCurvePitchOver(curve, 0.0, 0.6, 62.0) < 0.0, "mostly unvoiced span gives no pitch");
+        VocalBlock tgt;
+        tgt.startSec = 0.6; tgt.endSec = 1.4; tgt.baseMidi = 61; tgt.pitchOffset = 0.0;
+        VocalBlock refBlock = tgt;
+        refBlock.startSec = 0.5; refBlock.endSec = 2.0; refBlock.baseMidi = 64;
+        TrackRoles roles;
+        roles.pitch = true;
+        const auto fitted = fitToReference({ tgt }, 0.0, TimeMap(), { refBlock }, 0.0, roles, nullptr, &curve);
+        check(near(fitted[0].block.pitchShift, 1.0), "clean reference curve gives the sung note, not the block average");
+    }
+
+    // 빠른 런: 앞뒤 유성 블롭과 모두 맞닿은 짧은 음은 건너뛴다. 한쪽이 떨어져 있거나 긴 음이면 보정 대상이다.
+    {
+        const auto note = [](double start, double length, int midi)
+        {
+            VocalBlock b;
+            b.startSec = start; b.endSec = start + length; b.baseMidi = midi;
+            return b;
+        };
+        const std::vector<VocalBlock> run { note(0.0, 0.5, 60), note(0.5, 0.08, 62), note(0.58, 0.08, 64), note(0.66, 0.08, 62), note(0.74, 0.5, 60) };
+        check(isRunPassingNote(run, 1) && isRunPassingNote(run, 2) && isRunPassingNote(run, 3), "run: short notes touching both neighbours are skipped");
+        check(! isRunPassingNote(run, 0) && ! isRunPassingNote(run, 4), "run: long notes are not skipped");
+        const std::vector<VocalBlock> edge { note(0.0, 0.5, 60), note(0.5, 0.08, 62), note(0.7, 0.5, 60) };
+        check(! isRunPassingNote(edge, 1), "run: a gap on one side means it is not a run");
+    }
+
     return failures == 0 ? 0 : 1;
 }

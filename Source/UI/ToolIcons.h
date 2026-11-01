@@ -5,6 +5,8 @@
 enum class ToolIcon { None, Move, Cut, Volume, Drift, Vibrato, Flatten, UpDown, LeftRight, Undo, Redo, Balance };
 
 juce::Path makeToolIcon(ToolIcon icon);
+// 팝업 메뉴 항목 등에 붙일 아이콘 (버튼과 같은 선 굵기)
+std::unique_ptr<juce::Drawable> makeToolIconDrawable(ToolIcon icon, juce::Colour colour);
 
 // 아이콘 + 이름을 함께 그리는 버튼. 아이콘이 None이면 일반 TextButton과 같다.
 class IconTextButton : public juce::TextButton

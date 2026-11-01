@@ -1,4 +1,5 @@
 #include "BlockTransforms.h"
+#include "PitchFlow.h"
 #include <algorithm>
 #include <cmath>
 
@@ -154,6 +155,16 @@ std::optional<PitchJoint> jointBetween(const std::vector<VocalBlock>& blocks, si
 }
 
 } // namespace
+
+std::optional<size_t> neighbourVoicedBlock(const std::vector<VocalBlock>& blocks, size_t index, int direction)
+{
+    return neighbourVoiced(blocks, index, direction);
+}
+
+std::optional<PitchJoint> pitchJointBetween(const std::vector<VocalBlock>& blocks, size_t left, size_t right)
+{
+    return jointBetween(blocks, left, right);
+}
 
 std::vector<PitchJoint> findPitchJoints(const std::vector<VocalBlock>& blocks)
 {
@@ -313,7 +324,7 @@ double editedPitchAt(const VocalFeatures& f, const std::vector<VocalBlock>& bloc
     const auto& b = blocks[index];
     if (frame < b.beginFrame || frame >= b.endFrame || frame >= f.size() || f.midiF0[frame] <= 0.0)
         return 0.0;
-    auto pitch = f.midiF0[frame] + effectivePitchShift(blocks, index, sourceToDisplaySec(b, f.timeSec[frame])) + shapeOffsetAt(f, b, frame);
+    auto pitch = f.midiF0[frame] + flowPitchShift(f, blocks, index, frame) + shapeOffsetAt(f, b, frame);
     if (b.curveOffset.size() == b.endFrame - b.beginFrame)
         pitch += static_cast<double>(b.curveOffset[frame - b.beginFrame]);
     return pitch;
@@ -768,14 +779,18 @@ std::vector<BlockUpdate> withBaseCorrection(const std::vector<VocalBlock>& block
     return updates;
 }
 
+namespace
+{
+constexpr bool majorSteps[12] = { true, false, true, false, true, true, false, true, false, true, false, true };
+}
+
 int nearestScaleNote(double midi, const PitchScale& scale) noexcept
 {
     const auto nearest = static_cast<int>(std::lround(midi));
     if (scale.root < 0)
         return nearest;
-    static constexpr bool major[12] = { true, false, true, false, true, true, false, true, false, true, false, true };
     static constexpr bool minor[12] = { true, false, true, true, false, true, false, true, true, false, true, false };
-    const auto& steps = scale.minor ? minor : major;
+    const auto& steps = scale.minor ? minor : majorSteps;
     const auto inScale = [&](int note) { return steps[((note - scale.root) % 12 + 12) % 12]; };
     for (int distance = 0; distance <= 6; ++distance)
     {
@@ -791,17 +806,69 @@ int nearestScaleNote(double midi, const PitchScale& scale) noexcept
     return nearest;
 }
 
+namespace
+{
+// 음 길이 분포에서 가장 많이 덮는 장조. 같으면 이전 조(이어짐)를, 그다음 으뜸음이 많은 쪽
+int bestMajorRoot(const double (&weight)[12], int previous)
+{
+    int best = -1;
+    double bestScore = -1.0;
+    for (int root = 0; root < 12; ++root)
+    {
+        double score = 0.0;
+        for (int pc = 0; pc < 12; ++pc)
+            score += majorSteps[((pc - root) % 12 + 12) % 12] ? weight[pc] : 0.0;
+        score += 1e-3 * weight[root] + (root == previous ? 1e-6 : 0.0);
+        if (score > bestScore + 1e-12)
+        {
+            best = root;
+            bestScore = score;
+        }
+    }
+    return bestScore > 0.0 ? best : -1;
+}
+} // namespace
+
+std::vector<int> localKeyRoots(const std::vector<VocalBlock>& blocks)
+{
+    std::vector<int> roots(blocks.size(), -1);
+    int previous = -1;
+    size_t from = 0, to = 0;
+    double weight[12] = {};
+    const auto add = [&](size_t k, double sign)
+    {
+        if (! blocks[k].isConsonant)
+            weight[((static_cast<int>(std::lround(blocks[k].baseMidi + blocks[k].pitchOffset)) % 12) + 12) % 12]
+                += sign * (blocks[k].endSec - blocks[k].startSec);
+    };
+    for (size_t i = 0; i < blocks.size(); ++i)     // 블록은 시간순: 창을 밀며 더하고 뺀다
+    {
+        const auto centre = 0.5 * (blocks[i].startSec + blocks[i].endSec);
+        for (; to < blocks.size() && blocks[to].startSec <= centre + localKeySeconds; ++to)
+            add(to, 1.0);
+        for (; from < to && blocks[from].endSec < centre - localKeySeconds; ++from)
+            add(from, -1.0);
+        if (blocks[i].isConsonant)
+            continue;
+        roots[i] = bestMajorRoot(weight, previous);
+        previous = roots[i];
+    }
+    return roots;
+}
+
 std::vector<BlockUpdate> withPitchBalance(const std::vector<VocalBlock>& blocks, const std::vector<size_t>& indices,
                                           const PitchBalance& balance)
 {
     std::vector<BlockUpdate> updates;
+    const auto roots = balance.scale.local ? localKeyRoots(blocks) : std::vector<int>();
     for (const auto i : indices)
     {
         if (i >= blocks.size() || blocks[i].isConsonant)
             continue;
         auto block = blocks[i];
         const auto centre = block.baseMidi + block.pitchOffset;
-        const auto target = nearestScaleNote(centre, balance.scale);
+        const auto scale = balance.scale.local ? PitchScale { roots[i], false, false } : balance.scale;
+        const auto target = nearestScaleNote(centre, scale);
         block.centerTargetMidi = target == block.baseMidi ? -1 : target;
         const auto withinTolerance = std::abs(centre - target) * 100.0 < balance.toleranceCents;
         block.tidyAmount = withinTolerance ? 0.0 : std::clamp(balance.center, 0.0, 1.0);

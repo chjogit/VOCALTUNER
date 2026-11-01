@@ -1,113 +1,17 @@
 #include "EditRenderer.h"
+#include "ConsonantShield.h"
+#include "Psola.h"
+#include "PsolaWarp.h"
+#include "PsolaGrain.h"
 #include <atomic>
-#include "BlockTransforms.h"
-#include "EditTimeMap.h"
+#include <memory>
+#include "EditGrid.h"
 #include <algorithm>
 #include <cmath>
-#include <world/cheaptrick.h>
-#include <world/d4c.h>
-#include <world/synthesis.h>
 
 namespace
 {
 constexpr double padSeconds = 0.25;
-constexpr size_t maxGapFrames = 8;
-
-double midiToHz(double midi) noexcept { return 440.0 * std::pow(2.0, (midi - 69.0) / 12.0); }
-
-// 표시 시간 격자(프레임 i = i * 주기) 위에서 본 편집 결과
-struct EditGrid
-{
-    std::vector<int> sourceFrame;       // 프레임 i가 가져오는 원본 프레임
-    std::vector<double> targetMidi;     // 0 = 무성
-    std::vector<double> originalMidi;   // 같은 프레임에서 원본이 가진 음정
-    std::vector<double> gainDb;
-    int lastSourceFrame = 0;
-    size_t size() const noexcept { return targetMidi.size(); }
-};
-
-size_t frameCountFor(size_t samples, int sampleRate, double periodSec) noexcept
-{
-    return static_cast<size_t>(std::ceil(static_cast<double>(samples) / sampleRate / periodSec)) + 1;
-}
-
-void fillSourceFrames(EditGrid& grid, const VocalFeatures& f, const EditTimeMap& map, double period)
-{
-    const auto last = static_cast<int>(f.size()) - 1;
-    for (size_t i = 0; i < grid.size(); ++i)
-    {
-        const auto j = static_cast<int>(std::lround(map.toSource(static_cast<double>(i) * period) / period));
-        grid.sourceFrame[i] = std::clamp(j, 0, last);
-        grid.targetMidi[i] = f.midiF0[static_cast<size_t>(grid.sourceFrame[i])];
-        grid.originalMidi[i] = f.midiF0[std::min(i, f.size() - 1)];
-    }
-}
-
-void scatterBlockPitch(EditGrid& grid, const VocalFeatures& f, const std::vector<VocalBlock>& blocks, size_t index, double period)
-{
-    const auto& b = blocks[index];
-    long previousIndex = -1;
-    double previousMidi = 0.0;
-    for (auto frame = b.beginFrame; frame < std::min(b.endFrame, f.size()); ++frame)
-    {
-        const auto midi = editedPitchAt(f, blocks, index, frame);
-        if (midi <= 0.0)
-            continue;
-        const auto at = std::lround(curveFrameDisplaySec(f, b, frame) / period);
-        if (at < 0 || static_cast<size_t>(at) >= grid.size())
-            continue;
-        if (previousIndex >= 0 && at - previousIndex > 1 && static_cast<size_t>(at - previousIndex) <= maxGapFrames)
-            for (auto k = previousIndex + 1; k < at; ++k)
-                grid.targetMidi[static_cast<size_t>(k)] =
-                    previousMidi + (midi - previousMidi) * static_cast<double>(k - previousIndex) / static_cast<double>(at - previousIndex);
-        grid.targetMidi[static_cast<size_t>(at)] = midi;
-        previousIndex = at;
-        previousMidi = midi;
-    }
-}
-
-void fillBlockGain(EditGrid& grid, const std::vector<VocalBlock>& blocks, size_t index, double period)
-{
-    const auto& b = blocks[index];
-    const auto first = std::max(0L, std::lround(b.displayStartSec() / period));
-    const auto last = std::min(static_cast<long>(grid.size()), std::lround(b.displayEndSec() / period));
-    for (auto i = first; i < last; ++i)
-        grid.gainDb[static_cast<size_t>(i)] = effectiveGainDb(blocks, index, static_cast<double>(i) * period);
-}
-
-EditGrid buildGrid(size_t samples, int sampleRate, const VocalFeatures& f, const std::vector<VocalBlock>& blocks)
-{
-    const auto period = f.framePeriodMs / 1000.0;
-    EditGrid grid;
-    const auto n = f.size() == 0 ? size_t{0} : frameCountFor(samples, sampleRate, period);
-    grid.sourceFrame.assign(n, 0);
-    grid.targetMidi.assign(n, 0.0);
-    grid.originalMidi.assign(n, 0.0);
-    grid.gainDb.assign(n, 0.0);
-    if (n == 0)
-        return grid;
-    grid.lastSourceFrame = static_cast<int>(f.size()) - 1;
-    fillSourceFrames(grid, f, EditTimeMap(blocks), period);
-    for (size_t k = 0; k < blocks.size(); ++k)
-    {
-        scatterBlockPitch(grid, f, blocks, k, period);
-        fillBlockGain(grid, blocks, k, period);
-    }
-    return grid;
-}
-
-bool frameChanges(const EditGrid& g, size_t i, double tolerance) noexcept
-{
-    return g.sourceFrame[i] != std::min(static_cast<int>(i), g.lastSourceFrame) || std::abs(g.targetMidi[i] - g.originalMidi[i]) > tolerance;
-}
-
-bool rangeChanges(const EditGrid& g, size_t begin, size_t end, double tolerance) noexcept
-{
-    for (auto i = begin; i < end; ++i)
-        if (frameChanges(g, i, tolerance))
-            return true;
-    return false;
-}
 
 struct ChunkSpan { size_t coreBegin, coreEnd, begin, end; };   // 프레임 단위
 
@@ -125,134 +29,147 @@ std::vector<ChunkSpan> splitChunks(size_t frames, double period, double chunkSec
     return out;
 }
 
-struct WorldFrames
-{
-    std::vector<std::vector<double>> spectrogram, aperiodicity;
-    size_t firstFrame = 0;
-};
-
-WorldFrames analyzeFrames(const std::vector<float>& channel, int sampleRate, const VocalFeatures& f, size_t jlo, size_t jhi, int fftSize)
-{
-    const auto period = f.framePeriodMs / 1000.0;
-    const auto margin = static_cast<long>(0.1 * sampleRate);
-    const auto sBegin = std::max(0L, std::lround(f.timeSec[jlo] * sampleRate) - margin);
-    const auto sEnd = std::min(static_cast<long>(channel.size()), std::lround(f.timeSec[jhi] * sampleRate) + margin);
-    std::vector<double> x(channel.begin() + sBegin, channel.begin() + std::max(sBegin, sEnd));
-    const auto count = jhi - jlo + 1;
-    std::vector<double> times(count), f0(count);
-    for (size_t k = 0; k < count; ++k)
-    {
-        times[k] = f.timeSec[jlo + k] - static_cast<double>(sBegin) / sampleRate;
-        f0[k] = f.midiF0[jlo + k] > 0.0 ? midiToHz(f.midiF0[jlo + k]) : 0.0;
-    }
-    (void) period;
-    WorldFrames out;
-    out.firstFrame = jlo;
-    const auto bins = static_cast<size_t>(fftSize / 2 + 1);
-    out.spectrogram.assign(count, std::vector<double>(bins));
-    out.aperiodicity.assign(count, std::vector<double>(bins));
-    std::vector<double*> sp(count), ap(count);
-    for (size_t k = 0; k < count; ++k) { sp[k] = out.spectrogram[k].data(); ap[k] = out.aperiodicity[k].data(); }
-    CheapTrickOption ct;
-    InitializeCheapTrickOption(sampleRate, &ct);
-    ct.fft_size = fftSize;
-    D4COption d4;
-    InitializeD4COption(&d4);
-    CheapTrick(x.data(), static_cast<int>(x.size()), sampleRate, times.data(), f0.data(), static_cast<int>(count), &ct, sp.data());
-    D4C(x.data(), static_cast<int>(x.size()), sampleRate, times.data(), f0.data(), static_cast<int>(count), fftSize, &d4, ap.data());
-    return out;
-}
-
-// 풀스케일(1.0)에 가까워지면 부드럽게 눌러 디지털 클리핑(터짐)을 막는다. 0.9 아래는 그대로.
-std::vector<float> softLimited(const std::vector<double>& y)
-{
-    constexpr double knee = 0.9;
-    std::vector<float> out(y.size());
-    for (size_t i = 0; i < y.size(); ++i)
-    {
-        const auto a = std::abs(y[i]);
-        const auto limited = a <= knee ? a : knee + (1.0 - knee) * std::tanh((a - knee) / (1.0 - knee));
-        out[i] = static_cast<float>(y[i] < 0.0 ? -limited : limited);
-    }
-    return out;
-}
-
-double windowRms(const double* x, size_t length, long centre, long radius) noexcept
-{
-    const auto lo = std::max(0L, centre - radius), hi = std::min(static_cast<long>(length), centre + radius + 1);
-    double sum = 0.0;
-    for (auto i = lo; i < hi; ++i)
-        sum += x[i] * x[i];
-    return hi > lo ? std::sqrt(sum / static_cast<double>(hi - lo)) : 0.0;
-}
-
-// WORLD 합성은 원본보다 크게 나오는 경우가 많다(큰 소리에서 특히). 프레임마다 원본의 짧은 구간 음량에 맞춘다.
-// 이렇게 하지 않으면 큰 녹음에서 합성 구간이 풀스케일을 넘어 터진다.
-void matchLoudnessToSource(std::vector<double>& y, const std::vector<float>& channel, int sampleRate, double period,
-                           const EditGrid& grid, const ChunkSpan& span)
-{
-    const auto n = span.end - span.begin;
-    const auto radius = static_cast<long>(0.012 * sampleRate);
-    const auto hop = period * sampleRate;
-    std::vector<double> sourceDouble;
-    std::vector<double> gains(n, 1.0);
-    for (size_t i = 0; i < n; ++i)
-    {
-        const auto sourceCentre = std::lround(static_cast<double>(grid.sourceFrame[span.begin + i]) * hop);
-        const auto outCentre = std::lround(static_cast<double>(i) * hop);
-        double source = 0.0;
-        {
-            const auto lo = std::max(0L, sourceCentre - radius), hi = std::min(static_cast<long>(channel.size()), sourceCentre + radius + 1);
-            double sum = 0.0;
-            for (auto k = lo; k < hi; ++k)
-                sum += static_cast<double>(channel[static_cast<size_t>(k)]) * channel[static_cast<size_t>(k)];
-            source = hi > lo ? std::sqrt(sum / static_cast<double>(hi - lo)) : 0.0;
-        }
-        const auto made = windowRms(y.data(), y.size(), outCentre, radius);
-        gains[i] = made > 1e-7 && source > 1e-7 ? std::clamp(source / made, 0.1, 4.0) : 1.0;
-    }
-    // 급한 변화를 피하려고 ±3프레임으로 고르게
-    std::vector<double> smooth(n, 1.0);
-    for (size_t i = 0; i < n; ++i)
-    {
-        const auto lo = i > 3 ? i - 3 : 0, hi = std::min(n - 1, i + 3);
-        double sum = 0.0;
-        for (auto k = lo; k <= hi; ++k)
-            sum += gains[k];
-        smooth[i] = sum / static_cast<double>(hi - lo + 1);
-    }
-    for (size_t p = 0; p < y.size(); ++p)
-    {
-        const auto pos = static_cast<double>(p) / hop;
-        const auto i = std::min(n - 1, static_cast<size_t>(pos));
-        const auto j = std::min(n - 1, i + 1);
-        y[p] *= smooth[i] + (smooth[j] - smooth[i]) * (pos - static_cast<double>(i));
-    }
-}
-
-std::vector<float> synthesizeChunk(const std::vector<float>& channel, int sampleRate, const VocalFeatures& f, const EditGrid& grid,
-                                   const ChunkSpan& span, int fftSize, const WorldFrames& frames)
-{
-    const auto n = span.end - span.begin;
-    std::vector<double> f0(n);
-    std::vector<const double*> sp(n), ap(n);
-    for (size_t i = 0; i < n; ++i)
-    {
-        const auto m = grid.targetMidi[span.begin + i];
-        f0[i] = m > 0.0 ? midiToHz(m) : 0.0;
-        const auto row = static_cast<size_t>(grid.sourceFrame[span.begin + i]) - frames.firstFrame;
-        sp[i] = frames.spectrogram[row].data();
-        ap[i] = frames.aperiodicity[row].data();
-    }
-    const auto period = f.framePeriodMs / 1000.0;
-    const auto samples = static_cast<size_t>(std::lround(static_cast<double>(n) * period * sampleRate));
-    std::vector<double> y(samples, 0.0);
-    Synthesis(f0.data(), static_cast<int>(n), sp.data(), ap.data(), fftSize, f.framePeriodMs, sampleRate, static_cast<int>(samples), y.data());
-    matchLoudnessToSource(y, channel, sampleRate, period, grid, span);
-    return softLimited(y);
-}
-
 struct ChunkAudio { size_t startSample = 0; std::vector<std::vector<float>> channels; };
+
+// 다시 합성한 소리는 바뀐 프레임 둘레에서만 쓰고, 나머지는 원본 그대로 (편집하지 않은 음까지 합성 음색이 되지 않게)
+constexpr double renderedMarginSec = 0.03, renderedFadeSec = 0.02;
+
+// 구간의 프레임마다 합성 소리를 쓰는 비율 (1 = 합성, 0 = 원본)
+std::vector<double> renderedShare(const EditGrid& grid, const ChunkSpan& span, double tolerance, double period)
+{
+    const auto n = span.end - span.begin;
+    std::vector<double> distance(n, 1e9);
+    double since = 1e9;
+    for (size_t i = 0; i < n; ++i)
+    {
+        since = frameChanges(grid, span.begin + i, tolerance) ? 0.0 : since + 1.0;
+        distance[i] = since;
+    }
+    since = 1e9;
+    for (size_t i = n; i-- > 0;)
+    {
+        since = distance[i] == 0.0 ? 0.0 : since + 1.0;
+        distance[i] = std::min(distance[i], since);
+    }
+    std::vector<double> share(n);
+    for (size_t i = 0; i < n; ++i)
+        share[i] = std::clamp(1.0 - (distance[i] * period - renderedMarginSec) / renderedFadeSec, 0.0, 1.0);
+    return share;
+}
+
+void keepSourceWhereUnchanged(ChunkAudio& out, const AudioPlanes& src, const std::vector<double>& share, double period)
+{
+    if (share.empty())
+        return;
+    const auto framesPerSample = 1.0 / (period * src.sampleRate);
+    for (size_t c = 0; c < out.channels.size(); ++c)
+        for (size_t i = 0; i < out.channels[c].size(); ++i)
+        {
+            const auto pos = static_cast<double>(i) * framesPerSample;
+            const auto k = std::min(share.size() - 1, static_cast<size_t>(pos));
+            const auto next = std::min(share.size() - 1, k + 1);
+            const auto w = share[k] + (share[next] - share[k]) * (pos - static_cast<double>(k));
+            const auto at = out.startSample + i;
+            const auto original = at < src.channels[c].size() ? src.channels[c][at] : 0.0f;
+            out.channels[c][i] = static_cast<float>(w * out.channels[c][i] + (1.0 - w) * original);
+        }
+}
+
+// 합성기가 구간을 앞뒤 무성 틈까지 넓혀 계산하므로, 이동량도 같은 만큼 구해 둔다.
+// 구간 밖 이동량이 0이면 어느 구간으로 렌더하느냐에 따라 음정과 위상이 달라져 이어 붙이는 곳이 어긋난다.
+ChunkSpan spanToQuiet(const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span)
+{
+    const auto quiet = 2 * psola::activeDilateFrames + 4;
+    const auto limit = static_cast<size_t>(psola::maxExpandSec / (f.framePeriodMs / 1000.0));
+    const auto voiced = [&](size_t i) { return f.midiF0[static_cast<size_t>(grid.sourceFrame[i])] > 0.0; };
+    ChunkSpan wide = span;
+    for (size_t run = 0, walked = 0; wide.begin > 0 && run < quiet && walked < limit; --wide.begin, ++walked)
+        run = voiced(wide.begin - 1) ? 0 : run + 1;
+    for (size_t run = 0, walked = 0; wide.end < grid.size() && run < quiet && walked < limit; ++wide.end, ++walked)
+        run = voiced(wide.end) ? 0 : run + 1;
+    return wide;
+}
+
+// 프레임마다 옮길 반음 (원본 프레임 기준). 원래 무성이거나 tolerance 이하면 0
+std::vector<double> psolaShiftCurve(const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span, double tolerance)
+{
+    std::vector<double> shift(f.size(), 0.0);
+    for (auto i = span.begin; i < std::min(span.end, f.size()); ++i)
+    {
+        const auto d = grid.targetMidi[i] - grid.originalMidi[i];
+        if (grid.originalMidi[i] > 0.0 && grid.targetMidi[i] > 0.0 && std::abs(d) > tolerance)
+            shift[i] = d;
+    }
+    return shift;
+}
+
+ChunkAudio psolaChunk(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span, double tolerance)
+{
+    const auto period = f.framePeriodMs / 1000.0;
+    ChunkAudio out;
+    out.startSample = static_cast<size_t>(std::lround(static_cast<double>(span.begin) * period * src.sampleRate));
+    const auto samples = static_cast<size_t>(std::lround(static_cast<double>(span.end - span.begin) * period * src.sampleRate));
+    // 자음 보호: 첫 채널로 마찰음 같은 프레임을 찾아 그 프레임의 이동량을 0으로 (채널마다 다르면 소리가 갈라진다)
+    const auto wide = spanToQuiet(f, grid, span);
+    const auto shift = shieldedShift(src.channels[0].data(), src.channels[0].size(), src.sampleRate, period,
+                                psolaShiftCurve(f, grid, wide, tolerance), wide.begin, wide.end);
+    for (const auto& ch : src.channels)
+    {
+        const PsolaInput in { ch.data(), ch.size(), src.sampleRate, period, f.midiF0.data(), shift.data(), f.size() };
+        auto y = psolaShift(in, out.startSample, out.startSample + samples);
+        y.resize(samples, 0.0f);
+        out.channels.push_back(std::move(y));
+    }
+    return out;
+}
+
+// 박자가 바뀐 구간의 이동량 (출력 프레임 기준). 원본 음정은 가져오는 원본 프레임의 것. 자음 보호는 원본 시간 쪽에서 판단한다
+std::vector<double> warpShiftCurve(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span, double tolerance)
+{
+    std::vector<double> out(grid.size(), 0.0);
+    std::vector<double> bySource(f.size(), 0.0);
+    size_t lo = f.size(), hi = 0;
+    for (auto i = span.begin; i < span.end; ++i)
+    {
+        const auto j = static_cast<size_t>(grid.sourceFrame[i]);
+        const auto d = grid.targetMidi[i] - f.midiF0[j];
+        if (f.midiF0[j] > 0.0 && grid.targetMidi[i] > 0.0 && std::abs(d) > tolerance)
+        {
+            out[i] = d;
+            bySource[j] = d;
+        }
+        lo = std::min(lo, j);
+        hi = std::max(hi, j + 1);
+    }
+    const auto period = f.framePeriodMs / 1000.0;
+    const auto shielded = shieldedShift(src.channels[0].data(), src.channels[0].size(), src.sampleRate, period, bySource, lo, hi);
+    for (auto i = span.begin; i < span.end; ++i)
+    {
+        const auto j = static_cast<size_t>(grid.sourceFrame[i]);
+        if (bySource[j] != 0.0)
+            out[i] *= shielded[j] / bySource[j];
+    }
+    return out;
+}
+
+// 박자가 바뀐 구간: 박자와 음정을 한 번에 PSOLA로 (원본 파형 조각을 옮겨 놓는다)
+ChunkAudio warpChunk(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span, double tolerance)
+{
+    const auto period = f.framePeriodMs / 1000.0;
+    ChunkAudio out;
+    out.startSample = static_cast<size_t>(std::lround(static_cast<double>(span.begin) * period * src.sampleRate));
+    const auto samples = static_cast<size_t>(std::lround(static_cast<double>(span.end - span.begin) * period * src.sampleRate));
+    const auto shift = warpShiftCurve(src, f, grid, spanToQuiet(f, grid, span), tolerance);
+    const auto* map = grid.timeMap.get();
+    for (const auto& ch : src.channels)
+    {
+        const WarpInput in { ch.data(), ch.size(), src.sampleRate, period, f.midiF0.data(), f.size(), shift.data(), shift.size(),
+                             [map](double t) { return map->toSource(t); }, [map](double s) { return map->toDisplay(s); } };
+        out.channels.push_back(psolaWarp(in, out.startSample, out.startSample + samples));
+    }
+    keepSourceWhereUnchanged(out, src, renderedShare(grid, span, tolerance, period), period);
+    return out;
+}
 
 ChunkAudio renderChunk(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span, double tolerance)
 {
@@ -271,16 +188,9 @@ ChunkAudio renderChunk(const AudioPlanes& src, const VocalFeatures& f, const Edi
         }
         return out;
     }
-    const auto [lo, hi] = std::minmax_element(grid.sourceFrame.begin() + static_cast<long>(span.begin), grid.sourceFrame.begin() + static_cast<long>(span.end));
-    CheapTrickOption ct;
-    InitializeCheapTrickOption(src.sampleRate, &ct);
-    const auto fftSize = GetFFTSizeForCheapTrick(src.sampleRate, &ct);
-    for (const auto& ch : src.channels)
-    {
-        const auto frames = analyzeFrames(ch, src.sampleRate, f, static_cast<size_t>(*lo), static_cast<size_t>(*hi), fftSize);
-        out.channels.push_back(synthesizeChunk(ch, src.sampleRate, f, grid, span, fftSize, frames));
-    }
-    return out;
+    if (! grid.timingChanged)
+        return psolaChunk(src, f, grid, span, tolerance);
+    return warpChunk(src, f, grid, span, tolerance);
 }
 
 double chunkWeight(size_t sample, const ChunkSpan& span, bool first, bool last, double period, int sampleRate) noexcept

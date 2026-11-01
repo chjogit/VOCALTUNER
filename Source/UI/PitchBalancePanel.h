@@ -12,6 +12,7 @@ public:
     std::function<void(const PitchBalance&)> onChanged;         // 값이 바뀔 때마다 (드래그 중에도)
     std::function<void()> onClosed;
 
+    static constexpr int autoKeyId = 100;      // 조 목록의 '자동' 항목
     static constexpr int preferredWidth = 300;
     static constexpr int preferredHeight = 132;
 

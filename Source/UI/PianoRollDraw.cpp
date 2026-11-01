@@ -238,7 +238,7 @@ juce::Colour PianoRollView::tinted(juce::Colour colour) const
                  .withMultipliedSaturation(0.5f * backdropSaturation);
 }
 
-// 모드마다 편집 대상이 아닌 쪽을 흐리게: 블록 모드는 곡선을 투명도 50%, 곡선 모드는 블록을 투명도 70%,
+// 모드마다 편집 대상이 아닌 쪽을 흐리게: 블록 모드는 곡선을 투명도 30%, 곡선 모드는 블록을 투명도 70%,
 // 박자 모드는 둘 다 투명도 30%. 뒤에 깔리는 다른 트랙은 자기 레이어 투명도를 따로 쓴다.
 float PianoRollView::blockOpacity() const noexcept
 {
@@ -251,7 +251,7 @@ float PianoRollView::curveOpacity() const noexcept
 {
     if (paintingBackdrop)
         return 1.0f;
-    return mode == Mode::Blob ? 0.5f : (mode == Mode::Rhythm ? 0.7f : 1.0f);
+    return mode == Mode::Blob ? 0.7f : (mode == Mode::Rhythm ? 0.7f : 1.0f);
 }
 
 // 이 영역(클립)이 곡에서 차지하는 구간만 그린다. 같은 녹음에서 잘라 낸 다른 조각은 자기 시간대에 따로 그려진다.
@@ -408,7 +408,7 @@ void PianoRollView::drawTransitions(juce::Graphics& g) const
             continue;
 
         const juce::Point<float> handle(xJoint, 0.5f * (line.front().y + line.back().y));
-        const auto radius = active ? 5.5f : 4.0f;
+        const auto radius = jointHandleRadius(joint) * (active ? 1.35f : 1.0f);
         g.setColour(active ? accent : juce::Colours::white.withAlpha(0.8f));
         g.fillEllipse(handle.x - radius, handle.y - radius, radius * 2.0f, radius * 2.0f);
         if (active)

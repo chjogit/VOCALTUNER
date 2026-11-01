@@ -109,8 +109,8 @@ void PianoRollView::selectToolByNumber(size_t index)
         static constexpr BlobTool blobTools[] = { BlobTool::Move, BlobTool::Cut, BlobTool::Volume };
         if (index < 3)
             setBlobTool(blobTools[index]);
-        else if (index == 3)
-            setBlobTool(shapeTool);
+        else if (index == 3)    // 이미 곡선 도구면 음정 흐름 -> 비브라토 -> 펴기 순서로 바꾼다
+            setBlobTool(isShapeTool(blobTool) ? nextShapeTool(shapeTool) : shapeTool);
     }
 }
 
@@ -146,9 +146,16 @@ void PianoRollView::showModeMenu()
 void PianoRollView::showShapeMenu()
 {
     juce::PopupMenu menu;
-    menu.addItem(1, juce::String::fromUTF8("음정 흐름 (Pitch Drift)"), true, shapeTool == BlobTool::Drift);
-    menu.addItem(2, juce::String::fromUTF8("비브라토"), true, shapeTool == BlobTool::Vibrato);
-    menu.addItem(3, juce::String::fromUTF8("펴기"), true, shapeTool == BlobTool::Flatten);
+    const auto colour = findColour(juce::PopupMenu::textColourId);
+    const auto add = [&](int id, const char* name, ToolIcon icon, BlobTool tool)
+    {
+        juce::PopupMenu::Item item(juce::String::fromUTF8(name));
+        item.setID(id).setTicked(shapeTool == tool).setImage(makeToolIconDrawable(icon, colour));
+        menu.addItem(std::move(item));
+    };
+    add(1, "음정 흐름 (Pitch Drift)", ToolIcon::Drift, BlobTool::Drift);
+    add(2, "비브라토", ToolIcon::Vibrato, BlobTool::Vibrato);
+    add(3, "펴기", ToolIcon::Flatten, BlobTool::Flatten);
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&toolButtons[3]),
                        [safe = juce::Component::SafePointer<PianoRollView>(this)](int chosen)
                        {
@@ -174,7 +181,9 @@ void PianoRollView::syncToolbar()
         toolButtons[i].setVisible(visible);
         toolButtons[i].setButtonText(juce::String::fromUTF8(mode == Mode::Curve ? curveNames[i] : blobNames[i]));
         toolButtons[i].setIcon(mode == Mode::Curve ? curveIcons[i] : blobIcons[i]);
-        toolButtons[i].setTooltip(toolButtons[i].getButtonText() + "  " + juce::String(i + 1));
+        const auto cycles = mode == Mode::Blob && i == 3;
+        toolButtons[i].setTooltip(toolButtons[i].getButtonText() + "  " + juce::String(i + 1)
+                                  + (cycles ? juce::String::fromUTF8(" (다시 누르면 음정 흐름 → 비브라토 → 펴기)") : juce::String()));
         bool active = false;
         if (mode == Mode::Curve)
             active = static_cast<size_t>(curveTool) == i;

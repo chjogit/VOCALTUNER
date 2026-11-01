@@ -6,6 +6,7 @@
 #include <map>
 #include <memory>
 #include <vector>
+#include "Alignment/MixReference.h"
 #include "Alignment/ReferenceFit.h"
 #include "Analysis/AnalysisManager.h"
 #include "UI/TrackTypes.h"
@@ -75,6 +76,8 @@ private:
         double referenceOffset = 0.0, targetOffset = 0.0;
         AlignResult result;
         size_t anchorCount = 0;
+        std::shared_ptr<const MelodyTrack> melody;     // 기준이 반주 섞인 음원일 때만
+        bool timingFound = false;                      // 부른 음으로 박자를 찾았는지 (동기 맞추기는 박자를 안 옮김)
     };
 
     struct Prepared
@@ -83,6 +86,7 @@ private:
         juce::String message;
         const juce::ARAPlaybackRegion* reference = nullptr;
         std::shared_ptr<const AlignmentData> referenceData, targetData;
+        bool referenceIsMix = false;        // 기준이 반주 섞인 원곡 음원 -> 음정은 뽑은 멜로디로, 박자는 전체 시차 근처만
         Prepared fail(const juce::String& m) const { auto copy = *this; copy.message = m; return copy; }
     };
     struct AlignPlan
@@ -92,6 +96,18 @@ private:
         TimeMap guide;
         AlignOptions options;
         size_t anchorCount = 0;
+        bool referenceIsMix = false;
+        // 기준이 믹스일 때 멜로디 추출에 쓴다 (리더는 메시지 스레드에서 만들고 취소한다)
+        std::shared_ptr<AnalysisTask> referenceReader;
+        std::shared_ptr<const VocalFeatures> targetFeatures;
+        double referenceOffset = 0.0, targetOffset = 0.0;
+        std::function<bool()> cancelled;
+    };
+    struct Computed
+    {
+        AlignResult result;
+        std::shared_ptr<const MelodyTrack> melody;
+        bool timingFound = false;
     };
     struct FitJob
     {
@@ -101,7 +117,8 @@ private:
         juce::String lastMessage;
         std::shared_ptr<std::atomic<double>> dtwProgress = std::make_shared<std::atomic<double>>(0.0);
         std::shared_ptr<std::atomic<bool>> cancel = std::make_shared<std::atomic<bool>>(false);
-        std::future<AlignResult> pending;
+        std::future<Computed> pending;
+        std::shared_ptr<AnalysisTask> referenceReader;
         Prepared pendingFor;
         size_t pendingAnchors = 0;
     };
@@ -109,9 +126,10 @@ private:
     static std::vector<WordAnchor> anchorsFor(const AlignmentData&, double referenceOffset, const AlignmentData&, double targetOffset);
     Prepared prepare(const juce::ARAPlaybackRegion* target) const;
     const AlignResult* cachedMap(const juce::ARAPlaybackRegion* target, const Prepared&) const;
-    static AlignPlan planFor(const juce::ARAPlaybackRegion* target, const Prepared&);
-    static AlignResult runPlan(AlignPlan&);
-    void storeMap(const juce::ARAPlaybackRegion* target, const Prepared&, size_t anchorCount, AlignResult);
+    AlignPlan planFor(const juce::ARAPlaybackRegion* target, const Prepared&, bool withMelody) const;
+    static Computed runPlan(AlignPlan&);
+    void storeMap(const juce::ARAPlaybackRegion* target, const Prepared&, size_t anchorCount, Computed);
+    void releaseReader();
     Outcome apply(const juce::ARAPlaybackRegion* target, const Prepared&, bool newBaseline, bool beginGesture);
     bool isLive(const juce::ARAPlaybackRegion*) const;
     bool advanceJob(FitProgress&);

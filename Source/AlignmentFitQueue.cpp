@@ -25,8 +25,20 @@ void AlignmentController::startFit(std::vector<const juce::ARAPlaybackRegion*> t
 
 void AlignmentController::cancelFit()
 {
-    if (job != nullptr)
-        job->cancel->store(true);
+    if (job == nullptr)
+        return;
+    job->cancel->store(true);
+    releaseReader();
+}
+
+// 메시지 스레드: 원곡 리더를 닫는다 (읽던 조각이 끝날 때까지 기다리고, 이후 읽기는 0을 돌려준다)
+void AlignmentController::releaseReader()
+{
+    if (job != nullptr && job->referenceReader != nullptr)
+    {
+        job->referenceReader->cancel();
+        job->referenceReader.reset();
+    }
 }
 
 AlignmentController::FitProgress AlignmentController::finishJob(const juce::String& message)
@@ -83,12 +95,13 @@ bool AlignmentController::advanceJob(FitProgress& status)
     {
         if (j.pending.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
         {
-            status.stage = u8(j.cancel->load() ? "취소 중..." : "타이밍 정렬 중");
+            status.stage = u8(j.cancel->load() ? "취소 중..." : (j.referenceReader != nullptr ? "타이밍 정렬 · 원곡 멜로디 읽는 중" : "타이밍 정렬 중"));
             status.progress = at(0.4 + 0.5 * j.dtwProgress->load());
             return false;
         }
         auto result = j.pending.get();
-        if (result.cancelled || j.cancel->load())
+        releaseReader();
+        if (result.result.cancelled || j.cancel->load())
         {
             status.running = false;
             return false;
@@ -114,10 +127,12 @@ bool AlignmentController::advanceJob(FitProgress& status)
         status.progress = at(0.3 * (total > 0 ? static_cast<double>(done) / total : 0.0));
         return false;
     }
-    if (cachedMap(target, p) != nullptr)
+    if (cachedMap(target, p) != nullptr && cache[target].timingFound && (! p.referenceIsMix || cache[target].melody != nullptr))
         return next(apply(target, p, true, true));
 
-    auto plan = planFor(target, p);
+    auto plan = planFor(target, p, true);
+    j.referenceReader = plan.referenceReader;
+    plan.cancelled = [cancel = j.cancel] { return cancel->load(); };
     j.pendingFor = p;
     j.pendingAnchors = plan.anchorCount;
     plan.options.progress = [progress = j.dtwProgress, cancel = j.cancel](double fraction)

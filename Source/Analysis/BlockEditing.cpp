@@ -1,4 +1,5 @@
 #include "BlockEditing.h"
+#include "StablePitch.h"
 #include "BlockTransforms.h"
 #include <algorithm>
 #include <cmath>
@@ -14,13 +15,7 @@ bool hasVoicedFrames(const VocalFeatures& f, size_t begin, size_t end)
 
 double medianVoicedMidi(const VocalFeatures& f, size_t begin, size_t end)
 {
-    std::vector<double> voiced;
-    for (auto i = begin; i < end; ++i)
-        if (f.midiF0[i] > 0.0)
-            voiced.push_back(f.midiF0[i]);
-    std::sort(voiced.begin(), voiced.end());
-    const auto mid = voiced.size() / 2;
-    return voiced.size() % 2 == 1 ? voiced[mid] : 0.5 * (voiced[mid - 1] + voiced[mid]);
+    return medianOf(centreMidiFrames(f, begin, end));
 }
 
 // 구간과 피치를 features에서 다시 계산

@@ -151,6 +151,7 @@ private:
     void selectToolByNumber(size_t index);
     bool toolPicksConsonants() const noexcept { return ! needsPitchEditing(blobTool); }
     static bool isShapeTool(BlobTool t) noexcept { return t == BlobTool::Vibrato || t == BlobTool::Flatten || t == BlobTool::Drift; }
+    static BlobTool nextShapeTool(BlobTool t) noexcept { return t == BlobTool::Drift ? BlobTool::Vibrato : (t == BlobTool::Vibrato ? BlobTool::Flatten : BlobTool::Drift); }
     void onToolButton(size_t index);
     void showShapeMenu();
     void showModeMenu();
@@ -195,6 +196,7 @@ private:
     std::optional<size_t> pickCurveHandle(juce::Point<float> plotPos) const;
     std::optional<CurvePick> pickCurvePoint(juce::Point<float> plotPos) const;
     std::optional<size_t> pickTransition(juce::Point<float> plotPos) const;     // 왼쪽 블록 인덱스
+    float jointHandleRadius(const PitchJoint&) const;                           // 이음 점(o) 반지름: 줌 아웃하면 블록보다 커지지 않게 줄인다
     const void* pickOtherLayer(juce::Point<float> plotPos);                     // 다른 편집 가능 트랙의 블롭
     const std::vector<size_t>& curveHandlesForSelection() const;
     juce::Point<float> handlePoint(const VocalBlock&, size_t frame) const;
