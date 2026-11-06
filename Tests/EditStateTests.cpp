@@ -74,7 +74,7 @@ VocalBlock editedBlock(size_t begin, size_t end, int id)
     return b;
 }
 
-// 14개 편집 필드를 하나씩 비교 (sameEdits에 의존하지 않음)
+// 15개 편집 필드를 하나씩 비교 (sameEdits에 의존하지 않음)
 bool sameEditFields(const VocalBlock& a, const VocalBlock& b)
 {
     return a.pitchShift == b.pitchShift && a.gainDb == b.gainDb && a.startOffsetSec == b.startOffsetSec
@@ -82,7 +82,7 @@ bool sameEditFields(const VocalBlock& a, const VocalBlock& b)
            && a.userHandles == b.userHandles && a.transitionAfter == b.transitionAfter
            && a.vibratoDepth == b.vibratoDepth && a.vibratoRateHz == b.vibratoRateHz
            && a.flattenAmount == b.flattenAmount && a.tidyAmount == b.tidyAmount && a.driftAmount == b.driftAmount
-           && a.centerTargetMidi == b.centerTargetMidi;
+           && a.centerTargetMidi == b.centerTargetMidi && a.formantAmount == b.formantAmount;
 }
 
 bool sameStructure(const VocalBlock& a, const VocalBlock& b)
@@ -189,6 +189,19 @@ void testInvalidBlocks()
     check(! decodes(encodeEditState({ highHandle }, fp)), "handle after the block is rejected");
 }
 
+void testFormantRange()
+{
+    for (const double bad : { std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity(), -0.1, 1.01 })
+    {
+        auto badFormant = block(10, 30);
+        badFormant.formantAmount = bad;
+        check(! decodes(encodeEditState({ badFormant }, fp)), "formantAmount that is not finite or outside 0..1 is rejected");
+    }
+    auto edge = block(10, 30);
+    edge.formantAmount = 0.0;
+    check(decodes(encodeEditState({ edge }, fp)), "formantAmount 0 is accepted");
+}
+
 void testNonFinite()
 {
     auto nan = block(10, 30);
@@ -256,6 +269,7 @@ int main()
     testHeader();
     testInvalidBlocks();
     testNonFinite();
+    testFormantRange();
     testHasEdits();
     testHugeLengths();
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

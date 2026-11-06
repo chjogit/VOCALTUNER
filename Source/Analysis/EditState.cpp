@@ -1,4 +1,5 @@
 #include "EditState.h"
+#include <cmath>
 #include <limits>
 #include "BlockHistory.h"
 #include "EditStateIO.h"
@@ -8,6 +9,7 @@ namespace
 constexpr uint32_t magic = 'V' | ('T' << 8) | ('E' << 16) | (static_cast<uint32_t>('D') << 24);   // "VTED"
 constexpr size_t minBlockBytes = 150;   // 블록 하나가 차지하는 최소 바이트 (개수 검사용)
 constexpr uint32_t formatVersion = 2;   // 2: formantAmount 추가 (1도 읽는다)
+constexpr uint32_t baseVersion = 1;     // 모든 블록의 formantAmount가 1이면 이 형식 그대로 쓴다 (예전 빌드가 읽을 수 있게)
 
 void writeFingerprint(ByteWriter& w, const EditFingerprint& f)
 {
@@ -39,7 +41,7 @@ void writeStructure(ByteWriter& w, const VocalBlock& b)
     w.str(b.lyric);
 }
 
-void writeEdits(ByteWriter& w, const VocalBlock& b)
+void writeEdits(ByteWriter& w, const VocalBlock& b, uint32_t version)
 {
     w.f64(b.pitchShift);
     w.f64(b.gainDb);
@@ -54,7 +56,8 @@ void writeEdits(ByteWriter& w, const VocalBlock& b)
     for (const auto v : { b.transitionAfter, b.vibratoDepth, b.vibratoRateHz, b.flattenAmount, b.tidyAmount, b.driftAmount })
         w.f64(v);
     w.i32(b.centerTargetMidi);
-    w.f64(b.formantAmount);
+    if (version >= 2)
+        w.f64(b.formantAmount);
 }
 
 void readStructure(ByteReader& r, VocalBlock& b)
@@ -127,12 +130,17 @@ bool handlesOk(const VocalBlock& b)
     return true;
 }
 
-// 구조(범위/길이)와 유한한 실수만 검사하고 편집 값의 범위는 보지 않는다 (플러그인이 직접 쓴 데이터)
+bool formantOk(double amount) noexcept
+{
+    return std::isfinite(amount) && amount >= 0.0 && amount <= 1.0;
+}
+
+// 구조(범위/길이)와 포먼트 양만 검사하고 나머지 편집 값의 범위는 보지 않는다 (플러그인이 직접 쓴 데이터)
 // 범위가 프레임 안에 있고 앞 블록과 겹치지 않으며, 곡선/핸들이 범위에 맞아야 함
 bool blockValid(const VocalBlock& b, size_t previousEnd, size_t numFrames)
 {
     return b.beginFrame < b.endFrame && b.endFrame <= numFrames && b.beginFrame >= previousEnd
-           && curveSizeOk(b.curveOffset.size(), b) && curveSizeOk(b.curveWarp.size(), b) && handlesOk(b);
+           && curveSizeOk(b.curveOffset.size(), b) && curveSizeOk(b.curveWarp.size(), b) && handlesOk(b) && formantOk(b.formantAmount);
 }
 
 bool headerOk(ByteReader& r, const EditFingerprint& expected, uint32_t& version)
@@ -162,19 +170,28 @@ bool readBlocks(ByteReader& r, size_t numFrames, uint32_t version, std::vector<V
     }
     return true;
 }
+
+uint32_t versionFor(const std::vector<VocalBlock>& blocks)
+{
+    for (const auto& b : blocks)
+        if (b.formantAmount != 1.0)
+            return formatVersion;
+    return baseVersion;
+}
 } // namespace
 
 std::vector<uint8_t> encodeEditState(const std::vector<VocalBlock>& blocks, const EditFingerprint& fingerprint)
 {
     ByteWriter w;
+    const auto version = versionFor(blocks);
     w.u32(magic);
-    w.u32(formatVersion);
+    w.u32(version);
     writeFingerprint(w, fingerprint);
     w.u32(static_cast<uint32_t>(blocks.size()));
     for (const auto& b : blocks)
     {
         writeStructure(w, b);
-        writeEdits(w, b);
+        writeEdits(w, b, version);
     }
     return std::move(w.bytes);
 }

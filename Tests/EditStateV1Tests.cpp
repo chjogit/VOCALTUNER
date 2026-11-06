@@ -86,11 +86,27 @@ void testV2RoundTrip()
     check(back && back->at(0).formantAmount == 0.35, "version 2 round-trips formantAmount");
     check(bytes.size() > encodeV1({ b }).size(), "version 2 is larger than version 1");
 }
+
+// 모든 블록이 formantAmount 1이면 정확히 버전 1 바이트, 하나라도 다르면 버전 2. 둘 다 읽힌다
+void testVersionChoice()
+{
+    const std::vector<VocalBlock> plain { block(10, 30, 1), block(40, 60, 2) };
+    check(encodeEditState(plain, fp) == encodeV1(plain), "default formant blocks encode to the exact version 1 layout");
+    auto edited = plain;
+    edited[1].formantAmount = 0.5;
+    const auto v2 = encodeEditState(edited, fp);
+    check(v2[4] == 2 && v2 != encodeV1(edited), "any formant edit encodes version 2");
+    const auto back = decodeEditState(v2.data(), v2.size(), fp);
+    check(back && back->at(0).formantAmount == 1.0 && back->at(1).formantAmount == 0.5, "version 2 mixed blocks decode");
+    const auto empty = encodeEditState({}, fp);
+    check(empty[4] == 1 && decodeEditState(empty.data(), empty.size(), fp).has_value(), "empty list encodes version 1");
+}
 } // namespace
 
 int main()
 {
     testV1Decodes();
     testV2RoundTrip();
+    testVersionChoice();
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
