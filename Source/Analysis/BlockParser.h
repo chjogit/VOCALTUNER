@@ -35,6 +35,7 @@ struct VocalBlock
     double tidyAmount = 0.05;       // 중심 음정(Pitch Center): 블롭의 평균 음정을 목표 음 쪽으로 옮기는 정도. 곡선 모양은 그대로
     double driftAmount = 0.0;       // 음정 흐름(Pitch Drift): 블롭 안의 느린 오르내림을 줄이는 정도 (-1..1, 음수 = 과장). 비브라토는 남는다
     int centerTargetMidi = -1;      // 중심 음정의 목표 음 (-1 = 가장 가까운 반음 baseMidi)
+    double formantAmount = 1.0;     // 음정을 옮길 때 포먼트를 원본 자리에 두는 정도 (1 = 그대로 둠, 0 = 음정과 함께 이동)
 
     double displayStartSec() const noexcept { return startSec + startOffsetSec; }
     double displayEndSec() const noexcept { return endSec + endOffsetSec; }

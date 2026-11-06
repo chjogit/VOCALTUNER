@@ -36,6 +36,8 @@ add_library(vocaltuner_core STATIC
     Source/Analysis/PitchFlow.cpp
     Source/Analysis/BlockHistory.cpp
     Source/Analysis/EditState.cpp
+    Source/Analysis/SpectralEnvelope.cpp
+    Source/Analysis/LpcFormants.cpp
     Source/Alignment/SpectralFrames.cpp
     Source/Alignment/SectionClassifier.cpp
     Source/Alignment/TimeWarp.cpp
@@ -48,6 +50,7 @@ add_library(vocaltuner_core STATIC
     Source/Render/EditTimeMap.cpp
     Source/Render/EditGrid.cpp
     Source/Render/EditRenderer.cpp
+    Source/Render/EditShiftCurves.cpp
     Source/Render/SpectralDiff.cpp
     Source/Render/Psola.cpp
     Source/Render/PsolaGrain.cpp
@@ -267,6 +270,27 @@ if(VOCALTUNER_BUILD_TESTS)
         target_compile_options(SpectralDiffTests PRIVATE /utf-8)
     endif()
     add_test(NAME SpectralDiffTests COMMAND SpectralDiffTests)
+
+    add_executable(SpectralEnvelopeTests Tests/SpectralEnvelopeTests.cpp)
+    target_link_libraries(SpectralEnvelopeTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(SpectralEnvelopeTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME SpectralEnvelopeTests COMMAND SpectralEnvelopeTests)
+
+    add_executable(PsolaFormantTests Tests/PsolaFormantTests.cpp)
+    target_link_libraries(PsolaFormantTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(PsolaFormantTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME PsolaFormantTests COMMAND PsolaFormantTests)
+
+    add_executable(EditStateV1Tests Tests/EditStateV1Tests.cpp)
+    target_link_libraries(EditStateV1Tests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(EditStateV1Tests PRIVATE /utf-8)
+    endif()
+    add_test(NAME EditStateV1Tests COMMAND EditStateV1Tests)
 
     # 원본 vs 렌더 스펙트럼 차이 CLI (테스트 아님)
     add_executable(spectral_diff Tools/spectral_diff.cpp)

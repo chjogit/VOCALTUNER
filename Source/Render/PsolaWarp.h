@@ -22,6 +22,7 @@ struct WarpInput
     size_t outFrames = 0;
     std::function<double(double)> toSource;   // 출력 초 -> 원본 초
     std::function<double(double)> toDisplay;  // 원본 초 -> 출력 초
+    const double* formantAmount = nullptr;  // 출력 시간 프레임마다 포먼트를 원본 자리에 두는 정도 (nullptr = 1)
 };
 
 // 출력 샘플 [outBegin, outEnd)의 결과. 앞뒤 무성 틈까지 넓혀 계산하므로 어느 구간을 잘라 렌더해도 같은 샘플은 같은 값이다.

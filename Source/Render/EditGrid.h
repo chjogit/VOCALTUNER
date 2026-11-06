@@ -12,6 +12,8 @@ struct EditGrid
     std::vector<double> targetMidi;     // 0 = 무성
     std::vector<double> originalMidi;   // 같은 프레임에서 원본이 가진 음정
     std::vector<double> gainDb;
+    std::vector<double> formantAmount;  // 프레임마다 포먼트를 원본 자리에 두는 정도 (기본 1)
+    bool formantEdited = false;         // 어느 프레임이든 1이 아님
     int lastSourceFrame = 0;
     bool timingChanged = false;         // 문서 어딘가에 박자 편집이 있음 (렌더 방식은 구간이 아니라 문서 전체로 정한다)
     std::shared_ptr<const EditTimeMap> timeMap;

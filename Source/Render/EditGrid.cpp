@@ -55,6 +55,18 @@ void fillBlockGain(EditGrid& grid, const std::vector<VocalBlock>& blocks, size_t
     for (auto i = first; i < last; ++i)
         grid.gainDb[static_cast<size_t>(i)] = effectiveGainDb(blocks, index, static_cast<double>(i) * period);
 }
+
+void fillBlockFormant(EditGrid& grid, const VocalBlock& b, double period)
+{
+    const auto amount = std::clamp(b.formantAmount, 0.0, 1.0);
+    if (amount >= 1.0)
+        return;
+    const auto first = std::max(0L, std::lround(b.displayStartSec() / period));
+    const auto last = std::min(static_cast<long>(grid.size()), std::lround(b.displayEndSec() / period));
+    for (auto i = first; i < last; ++i)
+        grid.formantAmount[static_cast<size_t>(i)] = amount;
+    grid.formantEdited = grid.formantEdited || first < last;
+}
 } // namespace
 
 EditGrid buildGrid(size_t samples, int sampleRate, const VocalFeatures& f, const std::vector<VocalBlock>& blocks)
@@ -66,6 +78,7 @@ EditGrid buildGrid(size_t samples, int sampleRate, const VocalFeatures& f, const
     grid.targetMidi.assign(n, 0.0);
     grid.originalMidi.assign(n, 0.0);
     grid.gainDb.assign(n, 0.0);
+    grid.formantAmount.assign(n, 1.0);
     if (n == 0)
         return grid;
     grid.lastSourceFrame = static_cast<int>(f.size()) - 1;
@@ -77,6 +90,7 @@ EditGrid buildGrid(size_t samples, int sampleRate, const VocalFeatures& f, const
     {
         scatterBlockPitch(grid, f, blocks, k, period);
         fillBlockGain(grid, blocks, k, period);
+        fillBlockFormant(grid, blocks[k], period);
     }
     return grid;
 }

@@ -7,7 +7,7 @@ namespace
 {
 constexpr uint32_t magic = 'V' | ('T' << 8) | ('E' << 16) | (static_cast<uint32_t>('D') << 24);   // "VTED"
 constexpr size_t minBlockBytes = 150;   // 블록 하나가 차지하는 최소 바이트 (개수 검사용)
-constexpr uint32_t formatVersion = 1;
+constexpr uint32_t formatVersion = 2;   // 2: formantAmount 추가 (1도 읽는다)
 
 void writeFingerprint(ByteWriter& w, const EditFingerprint& f)
 {
@@ -54,6 +54,7 @@ void writeEdits(ByteWriter& w, const VocalBlock& b)
     for (const auto v : { b.transitionAfter, b.vibratoDepth, b.vibratoRateHz, b.flattenAmount, b.tidyAmount, b.driftAmount })
         w.f64(v);
     w.i32(b.centerTargetMidi);
+    w.f64(b.formantAmount);
 }
 
 void readStructure(ByteReader& r, VocalBlock& b)
@@ -94,7 +95,7 @@ std::vector<size_t> readFrames(ByteReader& r)
     return v;
 }
 
-void readEdits(ByteReader& r, VocalBlock& b)
+void readEdits(ByteReader& r, VocalBlock& b, uint32_t version)
 {
     b.pitchShift = r.f64();
     b.gainDb = r.f64();
@@ -110,6 +111,7 @@ void readEdits(ByteReader& r, VocalBlock& b)
     b.tidyAmount = r.f64();
     b.driftAmount = r.f64();
     b.centerTargetMidi = r.i32();
+    b.formantAmount = version >= 2 ? r.f64() : 1.0;
 }
 
 bool curveSizeOk(size_t curveSize, const VocalBlock& b)
@@ -133,15 +135,15 @@ bool blockValid(const VocalBlock& b, size_t previousEnd, size_t numFrames)
            && curveSizeOk(b.curveOffset.size(), b) && curveSizeOk(b.curveWarp.size(), b) && handlesOk(b);
 }
 
-bool headerOk(ByteReader& r, const EditFingerprint& expected)
+bool headerOk(ByteReader& r, const EditFingerprint& expected, uint32_t& version)
 {
     const auto m = r.u32();
-    const auto version = r.u32();
+    version = r.u32();
     const auto fingerprint = readFingerprint(r);
-    return r.ok && m == magic && version == formatVersion && fingerprint == expected;
+    return r.ok && m == magic && version >= 1 && version <= formatVersion && fingerprint == expected;
 }
 
-bool readBlocks(ByteReader& r, size_t numFrames, std::vector<VocalBlock>& blocks)
+bool readBlocks(ByteReader& r, size_t numFrames, uint32_t version, std::vector<VocalBlock>& blocks)
 {
     const auto count = r.u32();
     if (! r.fits(count, minBlockBytes))
@@ -152,7 +154,7 @@ bool readBlocks(ByteReader& r, size_t numFrames, std::vector<VocalBlock>& blocks
     {
         VocalBlock b;
         readStructure(r, b);
-        readEdits(r, b);
+        readEdits(r, b, version);
         if (! r.ok || ! blockValid(b, previousEnd, numFrames))
             return false;
         previousEnd = b.endFrame;
@@ -181,7 +183,8 @@ std::optional<std::vector<VocalBlock>> decodeEditState(const uint8_t* data, size
 {
     ByteReader r(data, size);
     std::vector<VocalBlock> blocks;
-    if (data == nullptr || ! headerOk(r, expected) || ! readBlocks(r, expected.numFrames, blocks) || ! r.atEnd())
+    uint32_t version = 0;
+    if (data == nullptr || ! headerOk(r, expected, version) || ! readBlocks(r, expected.numFrames, version, blocks) || ! r.atEnd())
         return std::nullopt;
     return blocks;
 }

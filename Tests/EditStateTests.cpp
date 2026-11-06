@@ -51,6 +51,7 @@ void fillScalarEdits(VocalBlock& b)
     b.tidyAmount = 0.6;
     b.driftAmount = -0.2;
     b.centerTargetMidi = 62;
+    b.formantAmount = 0.35;
 }
 
 void fillCurves(VocalBlock& b, size_t begin, size_t end)
@@ -149,9 +150,12 @@ void testHeader()
     flipped[0] ^= 0xFF;
     check(! decodes(flipped), "flipped magic is rejected");
 
-    auto v2 = bytes;
-    v2[4] = 2;
-    check(! decodes(v2), "unknown version is rejected");
+    auto v3 = bytes;
+    v3[4] = 3;
+    check(! decodes(v3), "unknown version is rejected");
+    auto v0 = bytes;
+    v0[4] = 0;
+    check(! decodes(v0), "version 0 is rejected");
 
     check(! decodes(bytes, { 48000.0, fp.numSamples, fp.numFrames }), "sample rate mismatch is rejected");
     check(! decodes(bytes, { fp.sampleRate, fp.numSamples + 1, fp.numFrames }), "sample count mismatch is rejected");

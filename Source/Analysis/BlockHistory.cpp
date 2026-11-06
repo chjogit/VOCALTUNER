@@ -8,7 +8,7 @@ auto editFields(Block& b)
 {
     return std::tie(b.pitchShift, b.gainDb, b.startOffsetSec, b.endOffsetSec, b.curveOffset, b.curveWarp, b.userHandles,
                     b.transitionAfter, b.vibratoDepth, b.vibratoRateHz, b.flattenAmount, b.tidyAmount, b.driftAmount,
-                    b.centerTargetMidi);
+                    b.centerTargetMidi, b.formantAmount);
 }
 } // namespace
 

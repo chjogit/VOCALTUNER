@@ -18,6 +18,15 @@ PsolaInput sourceView(const WarpInput& in)
     return { in.samples, in.length, in.sampleRate, in.framePeriodSec, in.sourceMidi, nullptr, in.sourceFrames };
 }
 
+// 출력 시각의 포먼트 양 (이동량과 같은 출력 프레임 격자)
+double formantAtOutput(const WarpInput& in, double outSample)
+{
+    if (in.formantAmount == nullptr || in.outFrames == 0)
+        return 1.0;
+    const auto k = static_cast<size_t>(std::max(0.0, outSample / in.sampleRate / in.framePeriodSec));
+    return in.formantAmount[std::min(k, in.outFrames - 1)];
+}
+
 double sourceSample(const WarpInput& in, double outSample) { return in.toSource(outSample / in.sampleRate) * in.sampleRate; }
 
 // 무성 조각 간격 (샘플). 구간 시작 정렬과 조각 이동이 같은 값을 써야 어느 구간을 렌더해도 같은 격자가 된다
@@ -93,8 +102,8 @@ struct Warper
     {
         const auto k = static_cast<size_t>(nearestMark(marks, sourceSample(in, t)));
         const auto period = periodOf(k);
-        addGrain(source, synth, marks[k], std::lround(t), period);
         const auto shift = shiftAtOutput(in, t);
+        addGrain(source, synth, marks[k], std::lround(t), period, formantRatio(formantAtOutput(in, t), shift));
         const auto next = t + static_cast<double>(period) / std::pow(2.0, shift / 12.0);
         t = std::max(lockedNext(next, shift, slopeAt(t)), t + 0.5 * static_cast<double>(period));
     }
