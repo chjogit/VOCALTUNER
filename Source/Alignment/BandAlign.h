@@ -38,6 +38,10 @@ struct BandAlignOptions
     double skipPenalty = 0.25;       // 말소리에서 기준이 두 칸 가는 걸음 (따라가는 쪽을 줄임)
     double silencePenalty = 0.02;    // 무음에서의 같은 걸음
     double shiftPenaltyPerSec = 0.0; // 원래 자리에서 멀어지는 데 주는 벌점. 평가(정답 있는 화음 20조각)에서 0.5면 최대 오차 222 ms, 0이면 25 ms
+    double levelWeight = 0.3;        // 네 대역 음량(발음 모양)을 맞추는 무게
+    double transientWeight = 4.0;    // 음절·자음 시작(대역 음량이 오르는 순간)을 맞추는 무게 (Sync Vx·VocAlign의 트랜지언트 감도)
+    double startPenaltyPerSec = 0.0; // 덩어리 첫 칸이 원래 자리에서 멀수록 주는 벌점
+    double strongBelowDb = 6.0;      // 덩어리의 센 프레임 기준(상위 10%)에서 이만큼 작으면 약한 프레임 (이동량을 이웃 센 프레임에서 가져옴). 0 이하면 끔
     double medianSec = 0.12;         // 이동량의 짧은 튐을 지우는 중앙값 반폭
     double smoothSec = 0.06;
     double maxStretch = 0.15;        // 이동량 변화율 한도 = 늘이고 줄이는 비율 한도 (0.15 = ±15%). VocAlign의 Flexibility에 해당

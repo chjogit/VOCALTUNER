@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include "../Source/Alignment/BandAlign.h"
 #include "../Source/Alignment/ReferenceFit.h"
@@ -52,8 +53,20 @@ int main(int argc, char** argv)
     const auto features = extractVocalFeatures(std::vector<double>(take.begin(), take.end()), tr);
     if (! features) return 1;
     const auto blocks = parseBlocks(*features);
+    BandAlignOptions bo;   // 실험용: 환경 변수
+    if (const char* v = std::getenv("BA_TRANSIENT")) bo.transientWeight = std::atof(v);
+        if (const char* v = std::getenv("BA_LEVEL")) bo.levelWeight = std::atof(v);
+        if (const char* v = std::getenv("BA_STRONG")) bo.strongBelowDb = std::atof(v);
+        if (const char* v = std::getenv("BA_START")) bo.startPenaltyPerSec = std::atof(v);
+    if (const char* v = std::getenv("BA_DIST")) bo.shiftPenaltyPerSec = std::atof(v);
+    if (const char* v = std::getenv("BA_DIFF")) bo.maxDifferenceSec = std::atof(v);
     const auto map = bandAlignMap(computeBandFrames(readerOf(guide), static_cast<int64_t>(guide.size()), gr), 0.0,
-                                  computeBandFrames(readerOf(take), static_cast<int64_t>(take.size()), tr), 0.0);
+                                  computeBandFrames(readerOf(take), static_cast<int64_t>(take.size()), tr), 0.0, bo);
+    if (const char* v = std::getenv("BR_TRACE"))   // "from,to" 곡 시간: 그 사이 이동량을 20 ms마다
+    {
+        const auto a = std::atof(v) - start, b = std::atof(std::strchr(v, ',') + 1) - start;
+        for (auto t = a; t <= b; t += 0.02) std::printf("  map %.2f %+.3f\n", t + start, map.map(t) - t);
+    }
     TrackRoles roles;
     roles.timing = true;
     std::vector<VocalBlock> fitted = blocks;

@@ -172,6 +172,11 @@ int main(int argc, char** argv)
         if (const char* v = std::getenv("BA_DIST")) bo.shiftPenaltyPerSec = std::atof(v);
         if (const char* v = std::getenv("BA_STRETCH")) bo.maxStretch = std::atof(v);
         if (const char* v = std::getenv("BA_MEDIAN")) bo.medianSec = std::atof(v);
+        if (const char* v = std::getenv("BA_TRANSIENT")) bo.transientWeight = std::atof(v);
+        if (const char* v = std::getenv("BA_LEVEL")) bo.levelWeight = std::atof(v);
+        if (const char* v = std::getenv("BA_STRONG")) bo.strongBelowDb = std::atof(v);
+        if (const char* v = std::getenv("BA_START")) bo.startPenaltyPerSec = std::atof(v);
+        if (const char* v = std::getenv("BA_DIFF")) bo.maxDifferenceSec = std::atof(v);
         if (const char* v = std::getenv("BA_SMOOTH")) bo.smoothSec = std::atof(v);
         const auto bandMap = bandAlignMap(refBands, 0.0, computeBandFrames(readTarget, static_cast<int64_t>(target.size()), sr), 0.0, bo);
         const auto oldEst = estimates(oldMap, segs), newEst = estimates(newMap, segs), bandEst = estimates(bandMap, segs);

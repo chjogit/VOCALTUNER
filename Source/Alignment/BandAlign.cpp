@@ -52,6 +52,7 @@ struct Grid
 {
     std::vector<std::array<float, 4>> level;
     std::vector<unsigned char> speech;
+    std::vector<float> onset;   // 네 대역의 음량이 20 ms 사이에 오른 양의 합 (음절·자음 시작)
 };
 
 Grid placed(const BandFrames& f, double offset, double gridStart, size_t count, double thresholdDb)
@@ -85,6 +86,10 @@ Grid placed(const BandFrames& f, double offset, double gridStart, size_t count, 
         }
         g.speech[k] = loud >= 2 ? 1 : 0;
     }
+    g.onset.assign(count, 0.0f);
+    for (size_t k = 2; k < count; ++k)
+        for (size_t b = 0; b < 4; ++b)
+            g.onset[k] += std::max(0.0f, g.level[k][b] - g.level[k - 2][b]);
     return g;
 }
 
@@ -103,14 +108,15 @@ std::vector<Run> speechRuns(const Grid& g, size_t minGap, size_t minRun)
     return runs;
 }
 
-double distance(const Grid& tgt, const Grid& ref, size_t g, long r) noexcept
+double distance(const Grid& tgt, const Grid& ref, size_t g, long r, double transientWeight, double levelWeight) noexcept
 {
     if (r < 0 || r >= static_cast<long>(ref.level.size()))
         return 4.0;
     const auto& a = tgt.level[g];
     const auto& b = ref.level[static_cast<size_t>(r)];
     double d = 0.0;
-    for (size_t i = 0; i < 4; ++i) d += std::abs(static_cast<double>(a[i]) - b[i]);
+    for (size_t i = 0; i < 4; ++i) d += levelWeight * std::abs(static_cast<double>(a[i]) - b[i]);
+    d += transientWeight * std::abs(static_cast<double>(tgt.onset[g]) - ref.onset[static_cast<size_t>(r)]);
     return d + (tgt.speech[g] != ref.speech[static_cast<size_t>(r)] ? 0.5 : 0.0);
 }
 
@@ -131,8 +137,9 @@ std::vector<long> alignRun(const Grid& tgt, const Grid& ref, size_t begin, size_
         for (size_t k = 0; k < width; ++k)
         {
             const auto r = static_cast<long>(g) - steps + static_cast<long>(k);
-            const auto local = distance(tgt, ref, g, r) + o.shiftPenaltyPerSec * std::abs(static_cast<double>(r - static_cast<long>(g))) * hop;
-            if (row == 0) { cur[k] = local; continue; }   // 시작은 열려 있다
+            const auto local = distance(tgt, ref, g, r, o.transientWeight, o.levelWeight) + o.shiftPenaltyPerSec * std::abs(static_cast<double>(r - static_cast<long>(g))) * hop;
+            // 시작은 열려 있되, 원래 자리에서 먼 칸으로 시작하는 데 벌점 (숨·잡음으로 시작하는 덩어리가 엉뚱한 칸에서 출발하지 않게)
+            if (row == 0) { cur[k] = local + o.startPenaltyPerSec * std::abs(static_cast<double>(r - static_cast<long>(g))) * hop; continue; }
             double best = inf;
             unsigned char step = 1;
             for (unsigned char s = 0; s < 3; ++s)
@@ -221,6 +228,31 @@ TimeMap bandAlignMap(const BandFrames& reference, double referenceOffset, const 
         const auto path = alignRun(tgt, ref, begin, end, steps, hop, o);
         std::vector<double> shift(path.size());
         for (size_t i = 0; i < path.size(); ++i) shift[i] = static_cast<double>(path[i] - static_cast<long>(begin + i)) * hop;
+        // 약한 프레임(숨·자음 앞머리·끝 여운: 덩어리 음량 상위 10%보다 strongBelowDb 넘게 작은 곳)의 이동량은 믿지 않고
+        // 가장 가까운 센 프레임의 값을 쓴다. 덩어리 머리의 숨을 기준의 엉뚱한 소리에 맞춘 값이 늘임 한도를 타고 프레이즈 전체로 퍼지던 문제.
+        {
+            std::vector<double> loud(shift.size());
+            for (size_t i = 0; i < shift.size(); ++i)
+            {
+                const auto& l = tgt.level[begin + i];
+                loud[i] = static_cast<double>(l[0]) + l[1] + l[2] + l[3];
+            }
+            auto sorted = loud;
+            std::sort(sorted.begin(), sorted.end());
+            const auto strong = sorted[sorted.size() * 9 / 10] * std::pow(10.0, -o.strongBelowDb / 20.0);
+            std::vector<long> nearest(shift.size(), -1);
+            long last = -1;
+            for (size_t i = 0; i < shift.size(); ++i) { if (loud[i] >= strong) last = static_cast<long>(i); nearest[i] = last; }
+            last = -1;
+            for (size_t i = shift.size(); i-- > 0;)
+            {
+                if (loud[i] >= strong) last = static_cast<long>(i);
+                if (last >= 0 && (nearest[i] < 0 || last - static_cast<long>(i) < static_cast<long>(i) - nearest[i])) nearest[i] = last;
+            }
+            auto filled = shift;
+            for (size_t i = 0; i < shift.size(); ++i) if (nearest[i] >= 0) filled[i] = shift[static_cast<size_t>(nearest[i])];
+            shift.swap(filled);
+        }
         // 짧은 튐은 중앙값으로 지운다 (튄 값이 늘임 한도를 타고 넓게 퍼지지 않게)
         {
             const auto radius = static_cast<long>(std::lround(o.medianSec / hop));
