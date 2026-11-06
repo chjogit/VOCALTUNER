@@ -172,6 +172,25 @@ void testNonFinite()
     check(! decodes(encodeEditState({ nanCurve }, fp)), "NaN curve value is rejected");
 }
 
+void testHasEdits()
+{
+    const auto original = sample();
+    check(! hasEdits(original, original), "identical lists have no edits");
+
+    auto changed = original;
+    changed[1].gainDb += 1.0;
+    check(hasEdits(changed, original), "one changed field is an edit");
+
+    auto cut = original;
+    cut[0].endFrame = 20;
+    cut.insert(cut.begin() + 1, editedBlock(20, 30, 9));
+    check(hasEdits(cut, original), "a cut block is an edit");
+
+    auto restored = changed;
+    restored[1].gainDb = original[1].gainDb;
+    check(! hasEdits(restored, original), "changed then restored values are no edit");
+}
+
 void testHugeLengths()
 {
     auto bytes = encodeEditState({ block(10, 30) }, fp);
@@ -190,6 +209,7 @@ int main()
     testHeader();
     testInvalidBlocks();
     testNonFinite();
+    testHasEdits();
     testHugeLengths();
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

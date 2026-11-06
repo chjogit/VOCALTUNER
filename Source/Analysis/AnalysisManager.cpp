@@ -186,6 +186,9 @@ std::optional<std::vector<uint8_t>> AnalysisManager::getSavedState(juce::ARAAudi
                 return std::nullopt;
             return it->second.pendingRestore;
         }
+        if (it->second.blocks == it->second.original
+            || (it->second.original != nullptr && ! hasEdits(*it->second.blocks, *it->second.original)))
+            return std::nullopt;   // 편집이 없으면 저장하지 않음 (다음에 열 때 새 분석 결과를 그대로 씀)
         blocks = it->second.blocks;
         fingerprint = it->second.fingerprint;
     }

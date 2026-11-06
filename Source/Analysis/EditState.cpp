@@ -1,5 +1,6 @@
 #include "EditState.h"
 #include <limits>
+#include "BlockHistory.h"
 #include "EditStateIO.h"
 
 namespace
@@ -182,4 +183,15 @@ std::optional<std::vector<VocalBlock>> decodeEditState(const uint8_t* data, size
     if (data == nullptr || ! headerOk(r, expected) || ! readBlocks(r, expected.numFrames, blocks) || ! r.atEnd())
         return std::nullopt;
     return blocks;
+}
+
+bool hasEdits(const std::vector<VocalBlock>& blocks, const std::vector<VocalBlock>& original)
+{
+    if (blocks.size() != original.size())
+        return true;
+    for (size_t i = 0; i < blocks.size(); ++i)
+        if (blocks[i].beginFrame != original[i].beginFrame || blocks[i].endFrame != original[i].endFrame
+            || ! sameEdits(blocks[i], original[i]))
+            return true;
+    return false;
 }

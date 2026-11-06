@@ -25,3 +25,6 @@ std::vector<uint8_t> encodeEditState(const std::vector<VocalBlock>& blocks, cons
 
 // 형식 오류, 지문 불일치, 잘못된 블록이 하나라도 있으면 nullopt
 std::optional<std::vector<VocalBlock>> decodeEditState(const uint8_t* data, size_t size, const EditFingerprint& expected);
+
+// 현재 블록 목록이 첫 분석 결과(original)와 다르면 true: 구간이 다르거나(자르기/붙이기) 편집 필드가 다름
+bool hasEdits(const std::vector<VocalBlock>& blocks, const std::vector<VocalBlock>& original);
