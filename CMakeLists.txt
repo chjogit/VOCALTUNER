@@ -302,6 +302,13 @@ if(VOCALTUNER_BUILD_TESTS)
     endif()
     add_test(NAME EditStateV1Tests COMMAND EditStateV1Tests)
 
+    add_executable(PsolaGoldenTests Tests/PsolaGoldenTests.cpp)
+    target_link_libraries(PsolaGoldenTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(PsolaGoldenTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME PsolaGoldenTests COMMAND PsolaGoldenTests)
+
     # PSOLA vs 위상 보코더 포먼트/음정/프리에코 측정 CLI (테스트 아님)
     add_executable(vt_formant_measure Tools/formant_measure.cpp)
     target_include_directories(vt_formant_measure PRIVATE Tools)
