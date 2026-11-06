@@ -14,6 +14,7 @@ struct AnalysisResult
 {
     VocalFeatures features;
     std::vector<VocalBlock> blocks;
+    uint64_t contentHash = 0;   // audioContentHash(분석에 쓴 모노 샘플), 편집 저장 지문용
     double elapsedSeconds = 0.0;
     double audioSeconds = 0.0;
 };

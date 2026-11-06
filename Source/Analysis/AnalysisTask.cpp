@@ -1,5 +1,6 @@
 #include "AnalysisTask.h"
 #include "WhisperRunner.h"
+#include "EditState.h"
 #include <algorithm>
 
 namespace
@@ -60,6 +61,7 @@ std::optional<AnalysisResult> AnalysisTask::run(ParallelFor parallelFor)
     auto blocks = parseBlocks(*features);
     return AnalysisResult { std::move(*features),
                             std::move(blocks),
+                            audioContentHash(mono),
                             (juce::Time::getMillisecondCounterHiRes() - startMs) / 1000.0,
                             static_cast<double>(numSamples) / sampleRate };
 }

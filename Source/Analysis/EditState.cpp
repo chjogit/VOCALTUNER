@@ -9,22 +9,28 @@ namespace
 {
 constexpr uint32_t magic = 'V' | ('T' << 8) | ('E' << 16) | (static_cast<uint32_t>('D') << 24);   // "VTED"
 constexpr size_t minBlockBytes = 150;   // 블록 하나가 차지하는 최소 바이트 (개수 검사용)
-constexpr uint32_t formatVersion = 2;   // 2: formantAmount 추가 (1도 읽는다)
-constexpr uint32_t baseVersion = 1;     // 모든 블록의 formantAmount가 1이면 이 형식 그대로 쓴다 (예전 빌드가 읽을 수 있게)
+constexpr uint32_t formatVersion = 3;   // 2: formantAmount 추가, 3: 지문에 내용 해시 추가 (1, 2도 읽는다)
+constexpr uint32_t baseVersion = 1;     // 해시가 없고 모든 블록의 formantAmount가 1이면 이 형식 그대로 쓴다 (예전 빌드가 읽을 수 있게)
+constexpr uint32_t formantVersion = 2;
+constexpr uint32_t hashVersion = 3;
 
-void writeFingerprint(ByteWriter& w, const EditFingerprint& f)
+void writeFingerprint(ByteWriter& w, const EditFingerprint& f, uint32_t version)
 {
     w.f64(f.sampleRate);
     w.u64(static_cast<uint64_t>(f.numSamples));
     w.u64(f.numFrames);
+    if (version >= hashVersion)
+        w.u64(f.contentHash);
 }
 
-EditFingerprint readFingerprint(ByteReader& r)
+EditFingerprint readFingerprint(ByteReader& r, uint32_t version)
 {
     EditFingerprint f;
     f.sampleRate = r.f64();
     f.numSamples = static_cast<int64_t>(r.u64());
     f.numFrames = static_cast<size_t>(r.u64());
+    if (version >= hashVersion)
+        f.contentHash = r.u64();
     return f;
 }
 
@@ -154,8 +160,12 @@ bool headerOk(ByteReader& r, const EditFingerprint& expected, uint32_t& version)
 {
     const auto m = r.u32();
     version = r.u32();
-    const auto fingerprint = readFingerprint(r);
-    return r.ok && m == magic && version >= 1 && version <= formatVersion && fingerprint == expected;
+    if (! r.ok || m != magic || version < 1 || version > formatVersion)
+        return false;
+    auto fingerprint = readFingerprint(r, version);
+    if (version < hashVersion)
+        fingerprint.contentHash = expected.contentHash;   // 해시 없이 저장된 예전 형식: 길이만 비교
+    return r.ok && fingerprint == expected;
 }
 
 bool readBlocks(ByteReader& r, size_t numFrames, uint32_t version, std::vector<VocalBlock>& blocks)
@@ -178,22 +188,44 @@ bool readBlocks(ByteReader& r, size_t numFrames, uint32_t version, std::vector<V
     return true;
 }
 
-uint32_t versionFor(const std::vector<VocalBlock>& blocks)
+uint32_t versionFor(const std::vector<VocalBlock>& blocks, const EditFingerprint& fingerprint)
 {
+    if (fingerprint.contentHash != 0)
+        return hashVersion;
     for (const auto& b : blocks)
         if (writableFormant(b.formantAmount) != 1.0)
-            return formatVersion;
+            return formantVersion;
     return baseVersion;
 }
 } // namespace
 
+uint64_t audioContentHash(const std::vector<double>& mono) noexcept
+{
+    uint64_t h = 1469598103934665603ull;   // FNV-1a 64
+    const auto mix = [&h](uint64_t v, int bytes) {
+        for (int i = 0; i < bytes; ++i)
+        {
+            h ^= (v >> (8 * i)) & 0xFF;
+            h *= 1099511628211ull;
+        }
+    };
+    mix(static_cast<uint64_t>(mono.size()), 8);
+    for (const auto x : mono)
+    {
+        // 16비트 양자화: 같은 녹음이면 빌드·부동소수 차이에 흔들리지 않게
+        const auto v = std::isfinite(x) ? std::clamp(x, -1.0, 1.0) : 0.0;
+        mix(static_cast<uint64_t>(static_cast<uint16_t>(static_cast<int16_t>(std::lround(v * 32767.0)))), 2);
+    }
+    return h != 0 ? h : 1;
+}
+
 std::vector<uint8_t> encodeEditState(const std::vector<VocalBlock>& blocks, const EditFingerprint& fingerprint)
 {
     ByteWriter w;
-    const auto version = versionFor(blocks);
+    const auto version = versionFor(blocks, fingerprint);
     w.u32(magic);
     w.u32(version);
-    writeFingerprint(w, fingerprint);
+    writeFingerprint(w, fingerprint, version);
     w.u32(static_cast<uint32_t>(blocks.size()));
     for (const auto& b : blocks)
     {

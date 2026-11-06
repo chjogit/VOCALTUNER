@@ -151,9 +151,9 @@ void testHeader()
     flipped[0] ^= 0xFF;
     check(! decodes(flipped), "flipped magic is rejected");
 
-    auto v3 = bytes;
-    v3[4] = 3;
-    check(! decodes(v3), "unknown version is rejected");
+    auto v4 = bytes;
+    v4[4] = 4;
+    check(! decodes(v4), "unknown version is rejected");
     auto v0 = bytes;
     v0[4] = 0;
     check(! decodes(v0), "version 0 is rejected");
@@ -265,6 +265,40 @@ void testHugeLengths()
         curve[blockStart + 54 + 32 + i] = 0xFF;
     check(! decodes(curve), "huge curve count is rejected");
 }
+// 길이는 같고 내용이 다른 녹음에는 옛 편집을 얹지 않는다
+void testContentHash()
+{
+    std::vector<double> mono(4410, 0.0);
+    for (size_t i = 0; i < mono.size(); ++i)
+        mono[i] = 0.5 * std::sin(0.03 * static_cast<double>(i));
+    auto changed = mono;
+    changed[2000] += 0.01;
+    auto tiny = mono;
+    tiny[2000] += 1.0e-9;   // 16비트 양자화 아래의 차이
+    const auto h = audioContentHash(mono);
+    check(h != 0 && h == audioContentHash(mono), "content hash is non-zero and repeatable");
+    check(h != audioContentHash(changed), "a changed sample changes the hash");
+    check(h == audioContentHash(tiny), "sub-16-bit noise keeps the hash");
+    check(h != audioContentHash(std::vector<double>(4410, 0.0)), "silence of the same length hashes differently");
+
+    const EditFingerprint withHash { fp.sampleRate, fp.numSamples, fp.numFrames, h };
+    const auto bytes = encodeEditState(sample(), withHash);
+    check(bytes[4] == 3, "a fingerprint with a content hash encodes version 3");
+    const auto back = decodeEditState(bytes.data(), bytes.size(), withHash);
+    check(back && sameList(*back, sample()), "version 3 round-trips");
+    check(! decodes(bytes, { fp.sampleRate, fp.numSamples, fp.numFrames, audioContentHash(changed) }),
+          "same length, different content is rejected");
+    check(! decodes(bytes, fp), "version 3 data is rejected when the current hash is unknown");
+
+    const auto old = encodeEditState(sample(), fp);   // 해시 없이 저장된 예전 형식
+    check(old[4] < 3 && decodes(old, withHash), "old version without hash still restores by length");
+    check(! decodes(old, { fp.sampleRate, fp.numSamples + 1, fp.numFrames, h }), "old version still checks length");
+
+    bool allRejected = true;
+    for (size_t n = 0; n < bytes.size(); ++n)
+        allRejected = allRejected && ! decodeEditState(bytes.data(), n, withHash).has_value();
+    check(allRejected, "every truncation of version 3 is rejected");
+}
 } // namespace
 
 int main()
@@ -278,5 +312,6 @@ int main()
     testFormantRange();
     testHasEdits();
     testHugeLengths();
+    testContentHash();
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
