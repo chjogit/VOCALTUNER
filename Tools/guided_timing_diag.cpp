@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include "../Source/Alignment/GuidedTiming.h"
+#include "../Source/Alignment/PhraseTiming.h"
 #include "WavIO.h"
 
 int main(int argc, char** argv)
@@ -30,7 +31,12 @@ int main(int argc, char** argv)
     std::printf("map points %zu\n", map.from().size());
     for (size_t i = 0; i < map.from().size(); ++i)
         std::printf("  %7.2f -> %+.3f\n", map.from()[i], map.to()[i] - map.from()[i]);
-    // 유성 구간 (0.15 s 이상 무음으로 끊긴 덩어리)
+    const auto refFeatures = extractVocalFeatures(std::vector<double>(ref.begin(), ref.end()), refRate);
+    if (! refFeatures) return 1;
+    PhraseTimingOptions po;
+    if (const char* v = std::getenv("PT_JUMP")) po.jumpCostPerSec = std::atof(v);
+    const auto phrase = phraseTimeMap(*refFeatures, rOff, *features, tOff, po);
+    // 유성 구간 (0.4 s 이상 무음으로 끊긴 덩어리): 현재 방식 / 프레이즈 방식 이동량
     const auto period = features->framePeriodMs / 1000.0;
     double segStart = -1, last = -1;
     std::printf("voiced phrases (take):\n");
@@ -39,10 +45,10 @@ int main(int argc, char** argv)
         const auto t = static_cast<double>(i) * period + tOff;
         if (features->midiF0[i] > 0)
         {
-            if (segStart < 0 || t - last > 0.4) { if (segStart >= 0) std::printf("  %7.2f-%7.2f shift %+.3f\n", segStart, last, map.map(segStart) - segStart); segStart = t; }
+            if (segStart < 0 || t - last > 0.4) { if (segStart >= 0) std::printf("  %7.2f-%7.2f shift %+.3f phrase %+.3f\n", segStart, last, map.map(segStart) - segStart, phrase.map(0.5 * (segStart + last)) - 0.5 * (segStart + last)); segStart = t; }
             last = t;
         }
     }
-    if (segStart >= 0) std::printf("  %7.2f-%7.2f shift %+.3f\n", segStart, last, map.map(segStart) - segStart);
+    if (segStart >= 0) std::printf("  %7.2f-%7.2f shift %+.3f phrase %+.3f\n", segStart, last, map.map(segStart) - segStart, phrase.map(0.5 * (segStart + last)) - 0.5 * (segStart + last));
     return 0;
 }

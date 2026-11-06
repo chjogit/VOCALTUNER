@@ -46,6 +46,7 @@ add_library(vocaltuner_core STATIC
     Source/Alignment/GuidedMelody.cpp
     Source/Alignment/MixReference.cpp
     Source/Alignment/GuidedTiming.cpp
+    Source/Alignment/PhraseTiming.cpp
     Source/Alignment/WordAnchors.cpp
     Source/Render/EditTimeMap.cpp
     Source/Render/EditGrid.cpp
@@ -197,6 +198,13 @@ if(VOCALTUNER_BUILD_TESTS)
     endif()
     add_test(NAME RollViewportTests COMMAND RollViewportTests)
 
+    add_executable(PhraseTimingTests Tests/PhraseTimingTests.cpp)
+    target_link_libraries(PhraseTimingTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(PhraseTimingTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME PhraseTimingTests COMMAND PhraseTimingTests)
+
     add_executable(AlignmentTests Tests/AlignmentTests.cpp)
     target_link_libraries(AlignmentTests PRIVATE vocaltuner_core)
     if(MSVC)
@@ -345,6 +353,14 @@ if(VOCALTUNER_BUILD_TESTS)
     target_link_libraries(vt_vowel_focus PRIVATE vocaltuner_core)
     if(MSVC)
         target_compile_options(vt_vowel_focus PRIVATE /utf-8)
+    endif()
+
+    # 문장 중간 진입 화음 박자 찾기 평가 CLI (테스트 아님)
+    add_executable(vt_phrase_timing_eval Tools/phrase_timing_eval.cpp)
+    target_include_directories(vt_phrase_timing_eval PRIVATE Tools)
+    target_link_libraries(vt_phrase_timing_eval PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(vt_phrase_timing_eval PRIVATE /utf-8)
     endif()
 
     # 가이드 박자 찾기 진단 CLI (테스트 아님)

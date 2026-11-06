@@ -169,7 +169,9 @@ AlignmentController::AlignPlan AlignmentController::planFor(const juce::ARAPlayb
     {
         plan.referenceReader = std::make_shared<AnalysisTask>(*sourceOf(p.reference), false);
         plan.targetFeatures = analysis.getFeatures(sourceOf(target));
+        plan.referenceFeatures = analysis.getFeatures(sourceOf(p.reference));
     }
+    plan.phraseTiming = phraseTiming;
     return plan;
 }
 
@@ -191,8 +193,16 @@ AlignmentController::Computed AlignmentController::runPlan(AlignPlan& plan)
         GuidedTimingOptions timing;
         timing.shouldCancel = cancelled;
         out.timingFound = true;
-        out.result.targetToReference = guidedTimeMap(reader.getNumSamples(), reader.getSampleRate(), read, *plan.targetFeatures,
-                                                     plan.targetOffset, plan.referenceOffset, timing);
+        if (plan.phraseTiming && ! plan.referenceIsMix && plan.referenceFeatures != nullptr)
+        {
+            PhraseTimingOptions phrase;
+            phrase.shouldCancel = cancelled;
+            out.result.targetToReference = phraseTimeMap(*plan.referenceFeatures, plan.referenceOffset, *plan.targetFeatures,
+                                                         plan.targetOffset, phrase);
+        }
+        else
+            out.result.targetToReference = guidedTimeMap(reader.getNumSamples(), reader.getSampleRate(), read, *plan.targetFeatures,
+                                                         plan.targetOffset, plan.referenceOffset, timing);
         if (plan.referenceIsMix)
             out.melody = std::make_shared<const MelodyTrack>(melodyForTarget(reader.getNumSamples(), reader.getSampleRate(), read, *plan.targetFeatures,
                                                                          plan.targetOffset, out.result.targetToReference, plan.referenceOffset, cancelled));

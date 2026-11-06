@@ -8,6 +8,7 @@
 #include <vector>
 #include "Alignment/MixReference.h"
 #include "Alignment/ReferenceFit.h"
+#include "Alignment/PhraseTiming.h"
 #include "Analysis/AnalysisManager.h"
 #include "UI/TrackTypes.h"
 
@@ -41,6 +42,9 @@ public:
     int referenceSlot(const juce::ARAPlaybackRegion*) const;        // 0 = 기준 아님
     bool isReference(const juce::ARAPlaybackRegion* r) const { return referenceSlot(r) > 0; }
     bool hasReference() const noexcept { return ! referenceSlots.empty(); }
+    // 분리 보컬 기준의 박자를 프레이즈 단위로 찾는다 (PhraseTiming). 기본 꺼짐 = 기존 GuidedTiming 그대로
+    void setPhraseTiming(bool on) { phraseTiming = on; cache.clear(); }
+    bool usesPhraseTiming() const noexcept { return phraseTiming; }
     void setReferenceSlot(const juce::ARAPlaybackRegion*, int slot); // 그 클립의 트랙 전체. 0 = 해제, 같은 색을 쓰던 트랙은 해제된다
     bool hasBaseline(const juce::ARAPlaybackRegion* r) const { return baselines.count(r) > 0; }
     void prune(const std::vector<const juce::ARAPlaybackRegion*>& live);
@@ -99,7 +103,8 @@ private:
         bool referenceIsMix = false;
         // 기준이 믹스일 때 멜로디 추출에 쓴다 (리더는 메시지 스레드에서 만들고 취소한다)
         std::shared_ptr<AnalysisTask> referenceReader;
-        std::shared_ptr<const VocalFeatures> targetFeatures;
+        std::shared_ptr<const VocalFeatures> targetFeatures, referenceFeatures;
+        bool phraseTiming = false;
         double referenceOffset = 0.0, targetOffset = 0.0;
         std::function<bool()> cancelled;
     };
@@ -137,6 +142,7 @@ private:
 
     AnalysisManager& analysis;
     std::map<TrackKey, int> referenceSlots;
+    bool phraseTiming = false;
     std::vector<const juce::ARAPlaybackRegion*> live;
     std::map<TrackKey, TrackSettings> tracks;
     std::map<const juce::ARAPlaybackRegion*, std::shared_ptr<const std::vector<VocalBlock>>> baselines;  // 마지막 맞추기 직전 블록 (정도 슬라이더의 기준)
