@@ -169,9 +169,10 @@ AlignmentController::AlignPlan AlignmentController::planFor(const juce::ARAPlayb
     {
         plan.referenceReader = std::make_shared<AnalysisTask>(*sourceOf(p.reference), false);
         plan.targetFeatures = analysis.getFeatures(sourceOf(target));
-        plan.referenceFeatures = analysis.getFeatures(sourceOf(p.reference));
+        if (bandTiming && ! p.referenceIsMix)
+            plan.targetReader = std::make_shared<AnalysisTask>(*sourceOf(target), false);
     }
-    plan.phraseTiming = phraseTiming;
+    plan.bandTiming = bandTiming;
     return plan;
 }
 
@@ -193,12 +194,15 @@ AlignmentController::Computed AlignmentController::runPlan(AlignPlan& plan)
         GuidedTimingOptions timing;
         timing.shouldCancel = cancelled;
         out.timingFound = true;
-        if (plan.phraseTiming && ! plan.referenceIsMix && plan.referenceFeatures != nullptr)
+        if (plan.bandTiming && ! plan.referenceIsMix && plan.targetReader != nullptr)
         {
-            PhraseTimingOptions phrase;
-            phrase.shouldCancel = cancelled;
-            out.result.targetToReference = phraseTimeMap(*plan.referenceFeatures, plan.referenceOffset, *plan.targetFeatures,
-                                                         plan.targetOffset, phrase);
+            auto& targetReader = *plan.targetReader;
+            const StereoReader readTarget = [&targetReader](int64_t start, int count, float* l, float* r) { targetReader.readStereo(start, count, l, r); };
+            const auto referenceBands = computeBandFrames(read, reader.getNumSamples(), reader.getSampleRate(), 0.01, cancelled);
+            const auto targetBands = computeBandFrames(readTarget, targetReader.getNumSamples(), targetReader.getSampleRate(), 0.01, cancelled);
+            BandAlignOptions band;
+            band.shouldCancel = cancelled;
+            out.result.targetToReference = bandAlignMap(referenceBands, plan.referenceOffset, targetBands, plan.targetOffset, band);
         }
         else
             out.result.targetToReference = guidedTimeMap(reader.getNumSamples(), reader.getSampleRate(), read, *plan.targetFeatures,

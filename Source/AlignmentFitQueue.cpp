@@ -34,11 +34,14 @@ void AlignmentController::cancelFit()
 // 메시지 스레드: 원곡 리더를 닫는다 (읽던 조각이 끝날 때까지 기다리고, 이후 읽기는 0을 돌려준다)
 void AlignmentController::releaseReader()
 {
-    if (job != nullptr && job->referenceReader != nullptr)
-    {
-        job->referenceReader->cancel();
-        job->referenceReader.reset();
-    }
+    if (job == nullptr)
+        return;
+    for (auto* reader : { &job->referenceReader, &job->targetReader })
+        if (*reader != nullptr)
+        {
+            (*reader)->cancel();
+            reader->reset();
+        }
 }
 
 AlignmentController::FitProgress AlignmentController::finishJob(const juce::String& message)
@@ -132,6 +135,7 @@ bool AlignmentController::advanceJob(FitProgress& status)
 
     auto plan = planFor(target, p, true);
     j.referenceReader = plan.referenceReader;
+    j.targetReader = plan.targetReader;
     plan.cancelled = [cancel = j.cancel] { return cancel->load(); };
     j.pendingFor = p;
     j.pendingAnchors = plan.anchorCount;

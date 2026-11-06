@@ -47,6 +47,7 @@ add_library(vocaltuner_core STATIC
     Source/Alignment/MixReference.cpp
     Source/Alignment/GuidedTiming.cpp
     Source/Alignment/PhraseTiming.cpp
+    Source/Alignment/BandAlign.cpp
     Source/Alignment/WordAnchors.cpp
     Source/Render/EditTimeMap.cpp
     Source/Render/EditGrid.cpp
@@ -197,6 +198,13 @@ if(VOCALTUNER_BUILD_TESTS)
         target_compile_options(RollViewportTests PRIVATE /utf-8)
     endif()
     add_test(NAME RollViewportTests COMMAND RollViewportTests)
+
+    add_executable(BandAlignTests Tests/BandAlignTests.cpp)
+    target_link_libraries(BandAlignTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(BandAlignTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME BandAlignTests COMMAND BandAlignTests)
 
     add_executable(PhraseTimingTests Tests/PhraseTimingTests.cpp)
     target_link_libraries(PhraseTimingTests PRIVATE vocaltuner_core)

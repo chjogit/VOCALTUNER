@@ -9,6 +9,7 @@
 #include <string>
 #include "../Source/Alignment/GuidedTiming.h"
 #include "../Source/Alignment/PhraseTiming.h"
+#include "../Source/Alignment/BandAlign.h"
 #include "../Source/Render/Psola.h"
 #include "WavIO.h"
 
@@ -51,8 +52,24 @@ std::vector<float> buildTarget(const std::vector<float>& lead, int sr, const Voc
     std::vector<float> moved = lead;
     if (interval != 0.0)
     {
-        const PsolaInput in { lead.data(), lead.size(), sr, f.framePeriodMs / 1000.0, f.midiF0.data(), shift.data(), f.size() };
+        // EVAL_HARD: 포먼트도 음정과 같이 움직여(다른 목소리 색) 고역을 깎고, 음량 -6 dB, 잡음 -50 dBFS를 더한다
+        const bool hard = std::getenv("EVAL_HARD") != nullptr;
+        const std::vector<double> formant(f.size(), 0.0);
+        const PsolaInput in { lead.data(), lead.size(), sr, f.framePeriodMs / 1000.0, f.midiF0.data(), shift.data(), f.size(),
+                              hard ? formant.data() : nullptr };
         moved = psolaShift(in, 0, lead.size());
+    }
+    if (std::getenv("EVAL_HARD") != nullptr)
+    {
+        uint32_t seed = 12345u;
+        float low = 0.0f;
+        const auto a = static_cast<float>(std::exp(-2.0 * 3.14159265358979 * 3000.0 / sr));
+        for (auto& v : moved)
+        {
+            low = (1.0f - a) * v + a * low;
+            seed = seed * 1664525u + 1013904223u;
+            v = 0.5f * (0.4f * v + 0.6f * low) + 0.00316f * (static_cast<float>(seed >> 8) / 8388608.0f - 1.0f);
+        }
     }
     std::vector<float> out(lead.size(), 0.0f);
     const auto fade = static_cast<size_t>(0.005 * sr);
@@ -124,6 +141,7 @@ int main(int argc, char** argv)
             l[i] = r[i] = k >= 0 && k < static_cast<int64_t>(lead.size()) ? lead[static_cast<size_t>(k)] : 0.0f;
         }
     };
+    const auto refBands = computeBandFrames(read, static_cast<int64_t>(lead.size()), sr);
     auto* md = std::fopen((out + "/results.md").c_str(), "w");
     std::fprintf(md, "# 문장 중간 진입 화음 박자 찾기 (%s, %s s부터 %s s)\n\n정답 시차를 알고 만든 따라가는 트랙. 오차 = |찾은 이동량 - 정답|.\n",
                  argv[1], argv[2], argv[3]);
@@ -140,18 +158,33 @@ int main(int argc, char** argv)
         if (const char* v = std::getenv("PT_CONF")) po.minConfidence = std::atof(v);
         if (const char* v = std::getenv("PT_PIECE")) po.maxPieceSec = std::atof(v);
         const auto newMap = phraseTimeMap(*ref, 0.0, *tf, 0.0, po);
-        const auto oldEst = estimates(oldMap, segs), newEst = estimates(newMap, segs);
+        const StereoReader readTarget = [&target](int64_t start, int count, float* l, float* r) {
+            for (int i = 0; i < count; ++i)
+            {
+                const auto k = start + i;
+                l[i] = r[i] = k >= 0 && k < static_cast<int64_t>(target.size()) ? target[static_cast<size_t>(k)] : 0.0f;
+            }
+        };
+        BandAlignOptions bo;   // 실험용: 환경 변수로 바꿀 수 있다
+        if (const char* v = std::getenv("BA_SHIFT")) bo.maxShiftSec = std::atof(v);
+        if (const char* v = std::getenv("BA_REPEAT")) bo.repeatPenalty = std::atof(v);
+        if (const char* v = std::getenv("BA_SKIP")) bo.skipPenalty = std::atof(v);
+        if (const char* v = std::getenv("BA_DIST")) bo.shiftPenaltyPerSec = std::atof(v);
+        const auto bandMap = bandAlignMap(refBands, 0.0, computeBandFrames(readTarget, static_cast<int64_t>(target.size()), sr), 0.0, bo);
+        const auto oldEst = estimates(oldMap, segs), newEst = estimates(newMap, segs), bandEst = estimates(bandMap, segs);
         std::fprintf(md, "\n## 화음 간격 %+.0f 반음\n\n| 방식 | 조각 | 오차 중앙값 | 30 ms 안 | 최대 오차 |\n|---|---|---|---|---|\n", interval);
         summary(md, "현재 (GuidedTiming)", segs, oldEst);
         summary(md, "프레이즈 (PhraseTiming)", segs, newEst);
-        std::fprintf(md, "\n| 조각 (기준 시간) | 정답 | 현재 | 프레이즈 |\n|---|---|---|---|\n");
+        summary(md, "대역 DTW (BandAlign)", segs, bandEst);
+        std::fprintf(md, "\n| 조각 (기준 시간) | 정답 | 현재 | 프레이즈 | 대역 DTW |\n|---|---|---|---|---|\n");
         for (size_t i = 0; i < segs.size(); ++i)
-            std::fprintf(md, "| %.2f-%.2f | %+.3f | %+.3f | %+.3f |\n", segs[i].begin, segs[i].end, -segs[i].delay, oldEst[i], newEst[i]);
+            std::fprintf(md, "| %.2f-%.2f | %+.3f | %+.3f | %+.3f | %+.3f |\n", segs[i].begin, segs[i].end, -segs[i].delay, oldEst[i], newEst[i], bandEst[i]);
         if (interval == 4.0)
         {
             writeMix(out + "/listen_1_before.wav", lead, target, sr);
             writeMix(out + "/listen_2_current.wav", lead, buildTarget(lead, sr, *ref, segs, interval, &oldEst), sr);
             writeMix(out + "/listen_3_phrase.wav", lead, buildTarget(lead, sr, *ref, segs, interval, &newEst), sr);
+            writeMix(out + "/listen_4_band.wav", lead, buildTarget(lead, sr, *ref, segs, interval, &bandEst), sr);
         }
     }
     std::fclose(md);
