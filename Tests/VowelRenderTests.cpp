@@ -53,7 +53,7 @@ Scene vowelThenNoise()
     return s;
 }
 
-// 같은 입력으로 vowelFocus 꺼짐/켜짐 렌더 (psola 경로와 warp 경로). 꺼짐은 기본과 비트까지 같고,
+// 같은 입력으로 vowelFocus 꺼짐/켜짐 렌더 (psola 경로와 warp 경로). 켬은 기본과 비트까지 같고 (11/6부터 기본 켬),
 // 켜면 변화는 숨소리(w 낮은) 구간에만 있고 모음 가운데는 꺼짐 렌더와 같다
 void testRenderFlag(bool timing)
 {
@@ -64,7 +64,7 @@ void testRenderFlag(bool timing)
     on.vowelFocus = true;
     const auto d = renderEdited(fx.audio, fx.f, { fx.b }), o = renderEdited(fx.audio, fx.f, { fx.b }, off), v = renderEdited(fx.audio, fx.f, { fx.b }, on);
     const char* path = timing ? "warp path" : "psola path";
-    check(d && o && v && d->channels[0] == o->channels[0], timing ? "warp path: vowelFocus off is bit-identical to the default" : "psola path: vowelFocus off is bit-identical to the default");
+    check(d && o && v && d->channels[0] == v->channels[0], timing ? "warp path: vowelFocus on is bit-identical to the default" : "psola path: vowelFocus on is bit-identical to the default");
     if (! (o && v)) return;
     const auto core = rmsDiff(o->channels[0], v->channels[0], 0.45, 0.75), noise = rmsDiff(o->channels[0], v->channels[0], 1.05, 1.2);
     std::printf("  %s: on-vs-off RMS difference: vowel core %.2g, noise %.2g\n", path, core, noise);

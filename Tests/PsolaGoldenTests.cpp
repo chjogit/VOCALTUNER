@@ -12,6 +12,7 @@
 // 컴파일러/플랫폼이 부동소수점 연산 순서를 바꾸면 달라질 수 있다: 그때는 7a0ea0b로 다시 뽑아 갱신한다.
 // 그래서 비트 단위 비교는 GCC x86-64에서만 한다. 그 밖(MSVC, clang, ARM)에서는 해시를 출력하고 통과한다.
 // 포먼트 데이터(formantAmount)는 전혀 쓰지 않는다 (nullptr / 1.0).
+// 11/6부터 vowelFocus가 기본 켬이므로, renderEdited 비교는 levelMatch·vowelFocus를 명시적으로 끈 경로로 한다 (= 공개판 1.0.1 출력).
 namespace
 {
 int failures = 0;
@@ -132,7 +133,10 @@ uint64_t editedHash(bool& ok)
     for (size_t i = 0; i < frames; ++i) f.timeSec[i] = static_cast<double>(i) * framePeriod;
     f.midiF0 = s.midi;
     f.rms.assign(frames, 0.5);
-    const auto out = renderEdited(audio, f, editedBlocks(s));
+    RenderOptions legacy;
+    legacy.levelMatch = false;
+    legacy.vowelFocus = false;
+    const auto out = renderEdited(audio, f, editedBlocks(s), legacy);
     ok = out.has_value() && out->channels.size() == 1;
     return ok ? fnv1a(out->channels[0]) : 0;
 }
