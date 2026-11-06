@@ -26,13 +26,29 @@ inline std::vector<double> harvestMidi(const std::vector<float>& x, int sr, doub
 
 inline double midiHz(double midi) { return 440.0 * std::pow(2.0, (midi - 69.0) / 12.0); }
 
-struct F0Stat { double medCents = std::nan(""), within20 = 0.0, kept = 0.0; };
+// 유성 프레임(5 ms)의 표본 에너지 합 (sampleRate 표본율, midi > 0인 프레임만)
+inline double voicedEnergy(const std::vector<float>& x, const std::vector<double>& midi, int sr)
+{
+    double e = 0.0;
+    const auto hop = static_cast<size_t>(framePeriod * sr);
+    for (size_t i = 0; i < midi.size(); ++i)
+        for (size_t j = i * hop; midi[i] > 0.0 && j < (i + 1) * hop && j < x.size(); ++j) e += static_cast<double>(x[j]) * x[j];
+    return e;
+}
+
+// 유성 프레임 RMS 변화 (dB)
+inline double voicedLevelDb(const std::vector<float>& src, const std::vector<float>& out, const std::vector<double>& midi, int sr)
+{
+    return 10.0 * std::log10((voicedEnergy(out, midi, sr) + 1e-20) / (voicedEnergy(src, midi, sr) + 1e-20));
+}
+
+struct F0Stat { double medCents = std::nan(""), within20 = 0.0, kept = 0.0, over50 = 0.0; };
 
 // 원본 x 2^(이동/12) 대비, 둘 다 유성인 프레임의 오차(cent), 20 cent 이내 비율, 원본 유성 프레임 중 출력도 유성인 비율
 inline F0Stat f0Stats(const std::vector<double>& src, const std::vector<double>& out, double shift)
 {
     std::vector<double> err;
-    size_t voiced = 0, good = 0;
+    size_t voiced = 0, good = 0, bad = 0;
     for (size_t i = 0; i < src.size() && i < out.size(); ++i)
     {
         if (src[i] <= 0.0) continue;
@@ -40,10 +56,12 @@ inline F0Stat f0Stats(const std::vector<double>& src, const std::vector<double>&
         if (out[i] <= 0.0) continue;
         err.push_back(std::abs(out[i] - src[i] - shift) * 100.0);
         good += err.back() <= 20.0;
+        bad += err.back() > 50.0;
     }
     F0Stat s;
     s.medCents = median(err);
     s.within20 = err.empty() ? 0.0 : 100.0 * static_cast<double>(good) / static_cast<double>(err.size());
+    s.over50 = err.empty() ? 0.0 : 100.0 * static_cast<double>(bad) / static_cast<double>(err.size());
     s.kept = voiced ? 100.0 * static_cast<double>(err.size()) / static_cast<double>(voiced) : 0.0;
     return s;
 }

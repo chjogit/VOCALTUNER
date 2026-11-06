@@ -90,7 +90,7 @@ Formants medianFormants(const std::vector<float>& y)
 }
 
 // 출력 음정의 원본 x 2^(이동/12) 대비 오차 (cent, 절대값 중앙값)와 유성으로 잡힌 비율
-void measureF0(const Source& src, const std::vector<float>& y, double shift, double& cents, double& voicedRatio)
+void measureF0(const Source& src, const std::vector<float>& y, double shift, double& cents, double& voicedRatio, double& over50)
 {
     FeatureOptions opt;
     opt.f0FloorHz = 40.0;
@@ -104,6 +104,7 @@ void measureF0(const Source& src, const std::vector<float>& y, double shift, dou
         if (f.midiF0[i] > 0.0) err.push_back(std::abs(f.midiF0[i] - (src.midi[i] + shift)) * 100.0);
     }
     cents = median(err);
+    over50 = err.empty() ? 0.0 : static_cast<double>(std::count_if(err.begin(), err.end(), [](double e) { return e > 50.0; })) / static_cast<double>(err.size());
     voicedRatio = wanted ? static_cast<double>(err.size()) / static_cast<double>(wanted) : 0.0;
 }
 
@@ -143,7 +144,7 @@ BandPower bandPower(const std::vector<float>& y)
     return p;
 }
 
-struct Row { std::string engine, vowel; double f0, shift, amount, f1, f1Exp, f2, f2Exp, cents, voiced, preEcho, highBand, highShare, ms; };
+struct Row { std::string engine, vowel; double f0, shift, amount, f1, f1Exp, f2, f2Exp, cents, voiced, preEcho, highBand, highShare, ms, over50 = 0; };
 
 std::vector<float> render(const std::string& engine, const Source& src, double shift, double amount, double& ms)
 {
@@ -164,7 +165,7 @@ Row measureRow(const std::string& engine, const Source& src, double shift, doubl
     const auto scale = std::pow(2.0, (1.0 - amount) * shift / 12.0);
     r.f1 = fm.hz[0]; r.f2 = fm.hz[1];
     r.f1Exp = src.formants.hz[0] * scale; r.f2Exp = src.formants.hz[1] * scale;
-    measureF0(src, y, shift, r.cents, r.voiced);
+    measureF0(src, y, shift, r.cents, r.voiced, r.over50);
     r.preEcho = preEchoDb(src, y);
     const auto out = bandPower(y), ref = bandPower(src.x);
     r.highBand = 10.0 * std::log10((out.high + 1e-12) / (ref.high + 1e-12));
@@ -175,25 +176,25 @@ Row measureRow(const std::string& engine, const Source& src, double shift, doubl
 std::string rowText(const Row& r)
 {
     char line[400];
-    std::snprintf(line, sizeof line, "| %s | %s | %.0f | %+.0f | %.1f | %.0f / %.0f (%+.0f) | %.0f / %.0f (%+.0f) | %.1f | %.0f%% | %.1f | %+.1f | %.1f | %.0f |\n",
+    std::snprintf(line, sizeof line, "| %s | %s | %.0f | %+.0f | %.1f | %.0f / %.0f (%+.0f) | %.0f / %.0f (%+.0f) | %.1f | %.0f%% | %.0f%% | %.1f | %+.1f | %.1f | %.0f |\n",
                   r.engine.c_str(), r.vowel.c_str(), r.f0, r.shift, r.amount, r.f1, r.f1Exp, r.f1 - r.f1Exp, r.f2, r.f2Exp, r.f2 - r.f2Exp,
-                  r.cents, r.voiced * 100.0, r.preEcho, r.highBand, r.highShare, r.ms);
+                  r.cents, r.over50 * 100.0, r.voiced * 100.0, r.preEcho, r.highBand, r.highShare, r.ms);
     return line;
 }
 
 std::string summaryText(const std::string& engine, const std::vector<Row>& rows)
 {
-    double f1 = 0, f2 = 0, cents = 0, pre = 0, hb = 0, share = 0, ms = 0, voiced = 0;
+    double f1 = 0, f2 = 0, cents = 0, pre = 0, hb = 0, share = 0, ms = 0, voiced = 0, over = 0;
     int n = 0;
     for (const auto& r : rows)
     {
         if (r.engine != engine) continue;
         f1 += std::abs(r.f1 / r.f1Exp - 1.0) * 100.0; f2 += std::abs(r.f2 / r.f2Exp - 1.0) * 100.0;
-        cents += r.cents; pre += r.preEcho; hb += r.highBand; share += r.highShare; ms += r.ms; voiced += r.voiced; ++n;
+        cents += r.cents; pre += r.preEcho; hb += r.highBand; share += r.highShare; ms += r.ms; voiced += r.voiced; over += r.over50; ++n;
     }
     char line[300];
-    std::snprintf(line, sizeof line, "| %s | %.1f%% | %.1f%% | %.1f | %.0f%% | %.1f | %+.1f | %.1f | %.0f |\n", engine.c_str(), f1 / n, f2 / n,
-                  cents / n, voiced / n * 100.0, pre / n, hb / n, share / n, ms / n);
+    std::snprintf(line, sizeof line, "| %s | %.1f%% | %.1f%% | %.1f | %.0f%% | %.0f%% | %.1f | %+.1f | %.1f | %.0f |\n", engine.c_str(), f1 / n, f2 / n,
+                  cents / n, over / n * 100.0, voiced / n * 100.0, pre / n, hb / n, share / n, ms / n);
     return line;
 }
 
@@ -232,10 +233,10 @@ bool writeReport(const char* path, const std::string& table, const std::vector<R
 {
     std::FILE* out = std::fopen(path, "w");
     if (! out) return false;
-    std::fprintf(out, "# PSOLA vs phase vocoder\n\nF1/F2: measured / expected (error Hz). F0 err: median |cents| vs source F0 x 2^(shift/12). voiced: share of voiced source frames Harvest finds voiced in the output.\n"
+    std::fprintf(out, "# PSOLA vs phase vocoder\n\nF1/F2: measured / expected (error Hz); expected is the design formula source formant x 2^((1-a)s/12), not a measured truth. >50c: share of frames voiced in both whose F0 is more than 50 cents from source x 2^(s/12). F0 err: median |cents| vs source F0 x 2^(shift/12). voiced: share of voiced source frames Harvest finds voiced in the output.\n"
                       "pre-echo: dB of output energy in the 50 ms before onset relative to source energy in the 50 ms after onset. HF: change of 4-8 kHz energy vs source (dB; the synthetic source has almost no HF, so small absolute levels read as large changes). HF/total: output 4-8 kHz energy relative to the output's total energy (dB, absolute). ms: render time.\n\n"
-                      "| engine | vowel | f0 | shift | amount | F1 | F2 | F0 err cents | voiced | pre-echo dB | HF dB | HF/total dB | ms |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n%s\n", table.c_str());
-    std::fprintf(out, "## Mean over the grid\n\n| engine | F1 abs err | F2 abs err | F0 err cents | voiced | pre-echo dB | HF dB | HF/total dB | ms |\n|---|---|---|---|---|---|---|---|---|\n%s%s",
+                      "| engine | vowel | f0 | shift | amount | F1 | F2 | F0 err cents | >50c | voiced | pre-echo dB | HF dB | HF/total dB | ms |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n%s\n", table.c_str());
+    std::fprintf(out, "## Mean over the grid\n\n| engine | F1 abs err | F2 abs err | F0 err cents | >50c | voiced | pre-echo dB | HF dB | HF/total dB | ms |\n|---|---|---|---|---|---|---|---|---|---|\n%s%s",
                  summaryText("psola", rows).c_str(), summaryText("vocoder", rows).c_str());
     std::fclose(out);
     return true;

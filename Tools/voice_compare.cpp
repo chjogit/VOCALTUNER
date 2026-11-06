@@ -30,7 +30,7 @@ struct Excerpt
 struct Row
 {
     std::string ex, engine;
-    double shift, amount, peak, ms, hfDb, preDb;
+    double shift, amount, peak, ms, hfDb, preDb, levelDb;
     size_t clips;
     F0Stat f0;
     FormantStat fm;
@@ -115,7 +115,7 @@ std::vector<float> render(const std::string& engine, const Excerpt& e, double sh
 Row measure(const Excerpt& e, const std::string& engine, double shift, double amount, const std::vector<float>& y, double ms, double srcHf)
 {
     const auto mo = harvestMidi(y, e.sr, 40.0);
-    return { e.name, engine, shift, amount, peakOf(y), ms, highShareDb(y, e.sr) - srcHf, preEchoDb(e, y), countClips(y),
+    return { e.name, engine, shift, amount, peakOf(y), ms, highShareDb(y, e.sr) - srcHf, preEchoDb(e, y), voicedLevelDb(e.x, y, e.midi, e.sr), countClips(y),
              f0Stats(e.midi, mo, shift), formantStats(e.x, y, e.midi, mo, shift, amount, e.sr) };
 }
 
