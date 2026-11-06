@@ -1,4 +1,5 @@
 #include "EditState.h"
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include "BlockHistory.h"
@@ -41,6 +42,12 @@ void writeStructure(ByteWriter& w, const VocalBlock& b)
     w.str(b.lyric);
 }
 
+// 디코더가 받아들이는 값으로: 유한하지 않으면 1, 아니면 [0, 1]
+double writableFormant(double amount) noexcept
+{
+    return std::isfinite(amount) ? std::clamp(amount, 0.0, 1.0) : 1.0;
+}
+
 void writeEdits(ByteWriter& w, const VocalBlock& b, uint32_t version)
 {
     w.f64(b.pitchShift);
@@ -57,7 +64,7 @@ void writeEdits(ByteWriter& w, const VocalBlock& b, uint32_t version)
         w.f64(v);
     w.i32(b.centerTargetMidi);
     if (version >= 2)
-        w.f64(b.formantAmount);
+        w.f64(writableFormant(b.formantAmount));
 }
 
 void readStructure(ByteReader& r, VocalBlock& b)
@@ -174,7 +181,7 @@ bool readBlocks(ByteReader& r, size_t numFrames, uint32_t version, std::vector<V
 uint32_t versionFor(const std::vector<VocalBlock>& blocks)
 {
     for (const auto& b : blocks)
-        if (b.formantAmount != 1.0)
+        if (writableFormant(b.formantAmount) != 1.0)
             return formatVersion;
     return baseVersion;
 }

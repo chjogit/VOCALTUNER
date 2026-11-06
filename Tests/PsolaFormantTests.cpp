@@ -139,8 +139,9 @@ void testRenderer()
     report("renderer amount=0 +7st", src, b);
     check(near(src, a, 1.0, 0.10), "renderer: block formantAmount 1 keeps formants");
     check(near(src, b, ratio7, 0.10), "renderer: block formantAmount 0 moves formants");
-    check(! keep.render().empty() && keep.render() == keep.render(), "renderer: default amount renders audio deterministically");
-    check(keep.render() != move.render(), "renderer: block formantAmount changes the audio");
+    const auto kept = keep.render(), moved = move.render();
+    check(! kept.empty() && kept != keep.audio.channels[0], "renderer: default amount renders audio that differs from the source");
+    check(kept != moved, "renderer: block formantAmount changes the audio");
 }
 
 // 4-8 kHz 파워 / 전체 파워 (dB), 한 창

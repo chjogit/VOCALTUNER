@@ -1,6 +1,10 @@
 #include "../Source/Analysis/EditState.h"
-#include "../Source/Analysis/EditStateIO.h"
+#include "EditStateV1Fixture.h"
+#include <iterator>
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <limits>
 #include <cstdlib>
 #include <vector>
 
@@ -32,40 +36,13 @@ VocalBlock block(size_t begin, size_t end, int id)
     return b;
 }
 
-void writeV1(ByteWriter& w, const VocalBlock& b)
-{
-    w.i32(b.id); w.u64(b.beginFrame); w.u64(b.endFrame); w.f64(b.startSec); w.f64(b.endSec);
-    w.i32(b.baseMidi); w.f64(b.pitchOffset); w.boolean(b.isConsonant); w.boolean(b.isContinuation); w.str(b.lyric);
-    w.f64(b.pitchShift); w.f64(b.gainDb); w.f64(b.startOffsetSec); w.f64(b.endOffsetSec);
-    w.u32(static_cast<uint32_t>(b.curveOffset.size()));
-    for (const auto v : b.curveOffset) w.f32(v);
-    w.u32(static_cast<uint32_t>(b.curveWarp.size()));
-    for (const auto v : b.curveWarp) w.f32(v);
-    w.u32(static_cast<uint32_t>(b.userHandles.size()));
-    for (const auto v : b.userHandles) w.u64(v);
-    for (const auto v : { b.transitionAfter, b.vibratoDepth, b.vibratoRateHz, b.flattenAmount, b.tidyAmount, b.driftAmount }) w.f64(v);
-    w.i32(b.centerTargetMidi);
-}
-
-std::vector<uint8_t> encodeV1(const std::vector<VocalBlock>& blocks)
-{
-    ByteWriter w;
-    w.u32('V' | ('T' << 8) | ('E' << 16) | (static_cast<uint32_t>('D') << 24));
-    w.u32(1);
-    w.f64(fp.sampleRate);
-    w.u64(static_cast<uint64_t>(fp.numSamples));
-    w.u64(fp.numFrames);
-    w.u32(static_cast<uint32_t>(blocks.size()));
-    for (const auto& b : blocks) writeV1(w, b);
-    return w.bytes;
-}
+std::vector<uint8_t> fixtureBytes() { return { std::begin(v1fixture::bytes), std::end(v1fixture::bytes) }; }
 
 void testV1Decodes()
 {
-    const std::vector<VocalBlock> blocks { block(10, 30, 1), block(40, 60, 2) };
-    const auto v1 = encodeV1(blocks);
+    const auto v1 = fixtureBytes();
     const auto back = decodeEditState(v1.data(), v1.size(), fp);
-    check(back && back->size() == 2, "version 1 buffer decodes");
+    check(back && back->size() == 2, "version 1 fixture (real 7a0ea0b encoder output) decodes");
     check(back && back->at(0).formantAmount == 1.0 && back->at(1).formantAmount == 1.0, "version 1 gives formantAmount = 1");
     check(back && back->at(1).pitchShift == 1.5 && back->at(1).centerTargetMidi == 62 && back->at(1).userHandles.size() == 1,
           "version 1 keeps the other edit fields");
@@ -84,22 +61,38 @@ void testV2RoundTrip()
     const auto bytes = encodeEditState({ b }, fp);
     const auto back = decodeEditState(bytes.data(), bytes.size(), fp);
     check(back && back->at(0).formantAmount == 0.35, "version 2 round-trips formantAmount");
-    check(bytes.size() > encodeV1({ b }).size(), "version 2 is larger than version 1");
+    check(bytes[4] == 2 && bytes.size() > 100, "version 2 header");
 }
 
 // 모든 블록이 formantAmount 1이면 정확히 버전 1 바이트, 하나라도 다르면 버전 2. 둘 다 읽힌다
 void testVersionChoice()
 {
     const std::vector<VocalBlock> plain { block(10, 30, 1), block(40, 60, 2) };
-    check(encodeEditState(plain, fp) == encodeV1(plain), "default formant blocks encode to the exact version 1 layout");
+    check(encodeEditState(plain, fp) == fixtureBytes(), "formant-free blocks encode byte for byte like the 7a0ea0b encoder");
     auto edited = plain;
     edited[1].formantAmount = 0.5;
     const auto v2 = encodeEditState(edited, fp);
-    check(v2[4] == 2 && v2 != encodeV1(edited), "any formant edit encodes version 2");
+    check(v2[4] == 2 && v2 != fixtureBytes(), "any formant edit encodes version 2");
     const auto back = decodeEditState(v2.data(), v2.size(), fp);
     check(back && back->at(0).formantAmount == 1.0 && back->at(1).formantAmount == 0.5, "version 2 mixed blocks decode");
     const auto empty = encodeEditState({}, fp);
     check(empty[4] == 1 && decodeEditState(empty.data(), empty.size(), fp).has_value(), "empty list encodes version 1");
+}
+
+// 디코더가 거부하는 값은 쓰지 않는다: 범위 밖은 [0,1]로, 유한하지 않으면 1로 쓴다
+void testWriteSanitizes()
+{
+    auto b = block(10, 30, 1);
+    for (const auto bad : { -0.5, 1.7, std::nan(""), std::numeric_limits<double>::infinity() })
+    {
+        b.formantAmount = bad;
+        const auto bytes = encodeEditState({ b }, fp);
+        const auto back = decodeEditState(bytes.data(), bytes.size(), fp);
+        const auto want = std::isnan(bad) || std::isinf(bad) ? 1.0 : std::clamp(bad, 0.0, 1.0);
+        check(back && back->at(0).formantAmount == want, "encode clamps formantAmount so the decoder accepts it");
+    }
+    b.formantAmount = std::nan("");
+    check(encodeEditState({ b }, fp) == encodeEditState({ block(10, 30, 1) }, fp), "non-finite formantAmount encodes like 1.0");
 }
 } // namespace
 
@@ -108,5 +101,6 @@ int main()
     testV1Decodes();
     testV2RoundTrip();
     testVersionChoice();
+    testWriteSanitizes();
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

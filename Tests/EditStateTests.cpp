@@ -2,6 +2,7 @@
 #include "../Source/Analysis/EditState.h"
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <limits>
 #include <vector>
@@ -193,9 +194,14 @@ void testFormantRange()
 {
     for (const double bad : { std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity(), -0.1, 1.01 })
     {
-        auto badFormant = block(10, 30);
-        badFormant.formantAmount = bad;
-        check(! decodes(encodeEditState({ badFormant }, fp)), "formantAmount that is not finite or outside 0..1 is rejected");
+        // 인코더는 이런 값을 쓰지 않으므로, 정상 버퍼의 마지막 필드(formantAmount, f64)를 직접 덮어쓴다
+        auto edited = block(10, 30);
+        edited.formantAmount = 0.5;
+        auto bytes = encodeEditState({ edited }, fp);
+        std::memcpy(bytes.data() + bytes.size() - 8, &bad, 8);
+        check(! decodes(bytes), "formantAmount that is not finite or outside 0..1 is rejected");
+        edited.formantAmount = bad;
+        check(decodes(encodeEditState({ edited }, fp)), "the encoder never writes a state the decoder rejects");
     }
     auto edge = block(10, 30);
     edge.formantAmount = 0.0;

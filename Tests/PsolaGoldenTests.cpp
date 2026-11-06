@@ -10,6 +10,7 @@
 // 포먼트 기능 이전 엔진(7a0ea0b)과 비트 단위로 같은지: 같은 합성 모음에 이동 곡선 / 박자 편집을 넣어 렌더한 결과의 FNV-1a 해시.
 // 아래 상수는 7a0ea0b를 같은 도구로 빌드해 `PsolaGoldenTests --print`로 얻은 값이다 (GCC x86-64 Release).
 // 컴파일러/플랫폼이 부동소수점 연산 순서를 바꾸면 달라질 수 있다: 그때는 7a0ea0b로 다시 뽑아 갱신한다.
+// 그래서 비트 단위 비교는 GCC x86-64에서만 한다. 그 밖(MSVC, clang, ARM)에서는 해시를 출력하고 통과한다.
 // 포먼트 데이터(formantAmount)는 전혀 쓰지 않는다 (nullptr / 1.0).
 namespace
 {
@@ -139,7 +140,12 @@ uint64_t editedHash(bool& ok)
 void checkHash(const char* what, uint64_t got, uint64_t golden)
 {
     std::printf("  %s: %016llx (golden %016llx)\n", what, static_cast<unsigned long long>(got), static_cast<unsigned long long>(golden));
+#if defined(__GNUC__) && ! defined(__clang__) && defined(__x86_64__)
     check(got == golden, what);
+#else
+    (void) golden;
+    std::printf("[SKIP] %s: bit-exact hashes are only checked with GCC on x86-64\n", what);
+#endif
 }
 } // namespace
 

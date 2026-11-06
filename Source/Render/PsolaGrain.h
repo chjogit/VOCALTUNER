@@ -23,6 +23,12 @@ void addGrain(const PsolaInput&, Synth&, long mark, long centre, long half, doub
 double formantRatio(double amount, double shiftSemitones) noexcept;
 // 조각 반폭. 포먼트를 옮기는 하향 이동(ratio != 1, shift < 0)에서는 조각이 간격(period / 2^(shift/12))의 두 배 이상이어야
 // 이웃 조각이 겹쳐 창 가중치가 0으로 떨어지지 않는다. 그 외는 period 그대로 (기본 경로 유지)
+// 알려진 한계 (기본 출력을 그대로 두려고 바꾸지 않았다):
+//  - amount = 1(ratio == 1)에서는 조각이 항상 period 반폭이라, 약 -7 반음보다 낮게 내리면 간격(period / 2^(shift/12))이
+//    조각 길이(2 * period)를 넘어 이웃 조각이 겹치지 않는다. 겹치지 않으면 가중치로 나눠 원본 파형이 거의 그대로 나와
+//    음정이 내려가지 않는다 (-12 반음은 원본에 가까운 음정을 돌려준다).
+//  - 조각 넓힘은 ratio != 1에서만 일어나므로 amount가 1보다 아주 조금만 작아져도 넓은 조각 경로로 갑자기 바뀐다
+//    (연속적이지 않다). 아직 이 값을 1 근처로 두는 UI는 없다.
 long grainHalf(long period, double shiftSemitones, double ratio) noexcept;
 // 프레임 f의 포먼트 양 (formantAmount == nullptr이면 1)
 double formantAmountAt(const PsolaInput&, size_t frame) noexcept;
