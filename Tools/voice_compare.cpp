@@ -1,15 +1,12 @@
-// 실제 목소리로 PSOLA vs 위상 보코더 비교 (JUCE 비의존, 테스트 아님)
-//   vt_voice_compare A.wav B.wav results.md [listenRawDir]
+// 실제 목소리로 PSOLA 측정 (JUCE 비의존, 테스트 아님)
+//   vt_voice_compare A.wav B.wav results.md
 // A는 17.0-23.5 s, B는 24.0-30.5 s 구간을 쓴다. 이동 x 포먼트 양 x 엔진 x 구간을 렌더하고 출력 오디오만으로 측정한다.
-// listenRawDir이 있으면 청취용 조건의 원본/PSOLA/보코더를 f32le 원시 파일로 쓴다 (ffmpeg로 이어 붙인다).
-#include "../Source/Render/PhaseVocoder.h"
 #include "../Source/Render/Psola.h"
 #include "VoiceMetrics.h"
 #include "WavIO.h"
 #include <chrono>
 #include <functional>
 #include <cstdio>
-#include <filesystem>
 #include <string>
 #include <world/fft.h>
 
@@ -107,7 +104,7 @@ std::vector<float> render(const std::string& engine, const Excerpt& e, double sh
         if (e.midi[i] > 0.0) shiftCurve[i] = shift;
     const PsolaInput in{ e.x.data(), e.x.size(), e.sr, framePeriod, e.midi.data(), shiftCurve.data(), e.midi.size(), amountCurve.data() };
     const auto t0 = std::chrono::steady_clock::now();
-    auto y = engine == "psola" ? psolaShift(in, 0, e.x.size()) : vocoderShift(in, 0, e.x.size());
+    auto y = psolaShift(in, 0, e.x.size());
     ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     return y;
 }
@@ -117,14 +114,6 @@ Row measure(const Excerpt& e, const std::string& engine, double shift, double am
     const auto mo = harvestMidi(y, e.sr, 40.0);
     return { e.name, engine, shift, amount, peakOf(y), ms, highShareDb(y, e.sr) - srcHf, preEchoDb(e, y), voicedLevelDb(e.x, y, e.midi, e.sr), countClips(y),
              f0Stats(e.midi, mo, shift), formantStats(e.x, y, e.midi, mo, shift, amount, e.sr) };
-}
-
-void writeRaw(const std::string& path, const std::vector<float>& y)
-{
-    std::FILE* f = std::fopen(path.c_str(), "wb");
-    if (! f) return;
-    std::fwrite(y.data(), sizeof(float), y.size(), f);
-    std::fclose(f);
 }
 
 bool loadExcerpt(const char* path, const char* name, double beginSec, double endSec, Excerpt& e)
@@ -142,12 +131,10 @@ bool loadExcerpt(const char* path, const char* name, double beginSec, double end
 
 int main(int argc, char** argv)
 {
-    if (argc < 4) { std::fprintf(stderr, "usage: vt_voice_compare A.wav B.wav results.md [listenRawDir]\n"); return 2; }
-    const std::string listen = argc > 4 ? argv[4] : "";
-    if (! listen.empty()) std::filesystem::create_directories(listen);
+    if (argc < 4) { std::fprintf(stderr, "usage: vt_voice_compare A.wav B.wav results.md\n"); return 2; }
     Excerpt a, b;
     if (! loadExcerpt(argv[1], "A", 17.0, 23.5, a) || ! loadExcerpt(argv[2], "B", 24.0, 30.5, b)) { std::fprintf(stderr, "cannot read wav\n"); return 1; }
     std::vector<Row> rows;
-    for (const auto* e : { &a, &b }) runExcerpt(*e, listen, rows);
+    for (const auto* e : { &a, &b }) runExcerpt(*e, rows);
     return writeReport(argv[3], rows, { &a, &b }) ? 0 : 1;
 }

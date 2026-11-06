@@ -62,14 +62,6 @@ target_link_libraries(vocaltuner_core PUBLIC world_harvest)
 target_compile_features(vocaltuner_core PUBLIC cxx_std_17)
 set_target_properties(vocaltuner_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# 실험용 엔진 (위상 보코더). 플러그인에는 연결하지 않고, 테스트와 측정 도구만 링크한다
-add_library(vocaltuner_experimental STATIC
-    Source/Render/PhaseVocoder.cpp
-    Source/Render/PhaseVocoderLock.cpp
-    Source/Render/PhaseVocoderFormant.cpp)
-target_link_libraries(vocaltuner_experimental PUBLIC vocaltuner_core)
-set_target_properties(vocaltuner_experimental PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
 if(NOT VOCALTUNER_CORE_ONLY)
 # juce_add_plugin 이전에 호출해야 함
 juce_set_ara_sdk_path(${CMAKE_CURRENT_SOURCE_DIR}/ARA_SDK)
@@ -293,13 +285,6 @@ if(VOCALTUNER_BUILD_TESTS)
     endif()
     add_test(NAME PsolaFormantTests COMMAND PsolaFormantTests)
 
-    add_executable(PhaseVocoderTests Tests/PhaseVocoderTests.cpp)
-    target_link_libraries(PhaseVocoderTests PRIVATE vocaltuner_experimental)
-    if(MSVC)
-        target_compile_options(PhaseVocoderTests PRIVATE /utf-8)
-    endif()
-    add_test(NAME PhaseVocoderTests COMMAND PhaseVocoderTests)
-
     add_executable(EditStateV1Tests Tests/EditStateV1Tests.cpp)
     target_link_libraries(EditStateV1Tests PRIVATE vocaltuner_core)
     if(MSVC)
@@ -314,18 +299,18 @@ if(VOCALTUNER_BUILD_TESTS)
     endif()
     add_test(NAME PsolaGoldenTests COMMAND PsolaGoldenTests)
 
-    # PSOLA vs 위상 보코더 포먼트/음정/프리에코 측정 CLI (테스트 아님)
+    # PSOLA 포먼트/음정/프리에코 측정 CLI (테스트 아님)
     add_executable(vt_formant_measure Tools/formant_measure.cpp)
     target_include_directories(vt_formant_measure PRIVATE Tools)
-    target_link_libraries(vt_formant_measure PRIVATE vocaltuner_experimental)
+    target_link_libraries(vt_formant_measure PRIVATE vocaltuner_core)
     if(MSVC)
         target_compile_options(vt_formant_measure PRIVATE /utf-8)
     endif()
 
-    # 실제 목소리 PSOLA vs 위상 보코더 비교 CLI (테스트 아님)
+    # 실제 목소리 PSOLA 측정 CLI (테스트 아님)
     add_executable(vt_voice_compare Tools/voice_compare.cpp)
     target_include_directories(vt_voice_compare PRIVATE Tools)
-    target_link_libraries(vt_voice_compare PRIVATE vocaltuner_experimental)
+    target_link_libraries(vt_voice_compare PRIVATE vocaltuner_core)
     if(MSVC)
         target_compile_options(vt_voice_compare PRIVATE /utf-8)
     endif()

@@ -3,51 +3,15 @@
 
 namespace
 {
-bool isListenCase(double shift, double amount)
-{
-    constexpr double cases[][2] = { { -2, 1 }, { 2, 1 }, { -5, 1 }, { 7, 1 }, { -12, 1 }, { 12, 1 }, { -5, 0 }, { 7, 0 }, { 7, 0.5 } };
-    return std::any_of(std::begin(cases), std::end(cases), [&](const auto& c) { return c[0] == shift && c[1] == amount; });
-}
-
-// 유성 프레임 RMS를 원본에 맞추는 배율 (처리 결과가 무음이면 1)
-double matchGain(const Excerpt& e, const std::vector<float>& y)
-{
-    const auto have = voicedEnergy(y, e.midi, e.sr);
-    return have > 1e-20 ? std::sqrt(voicedEnergy(e.x, e.midi, e.sr) / have) : 1.0;
-}
-
-std::vector<float> scaled(const std::vector<float>& y, double g)
-{
-    std::vector<float> out(y.size());
-    for (size_t i = 0; i < y.size(); ++i) out[i] = static_cast<float>(y[i] * g);
-    return out;
-}
-
-// 청취 조건이면 세 부분의 원시 파일(처리 부분은 레벨을 원본 유성 RMS에 맞춘 것)과 manifest(이름, 피크 3개, 배율 2개)를 쓴다
-void exportListen(const Excerpt& e, const std::string& dir, double shift, double amount, const std::vector<float>& ps, const std::vector<float>& vc)
-{
-    char base[200];
-    std::snprintf(base, sizeof base, "%s_%+.0fst_f%g", e.name.c_str(), shift, amount);
-    const auto gp = matchGain(e, ps), gv = matchGain(e, vc);
-    const auto psOut = scaled(ps, gp), vcOut = scaled(vc, gv);
-    for (const auto& [tag, y] : { std::pair<const char*, const std::vector<float>*>{ "src", &e.x }, { "psola", &psOut }, { "vocoder", &vcOut } })
-        writeRaw(dir + "/" + base + "_" + tag + ".f32", *y);
-    std::FILE* m = std::fopen((dir + "/manifest.txt").c_str(), "a");
-    std::fprintf(m, "%s %.6f %.6f %.6f %.6f %.6f\n", base, peakOf(e.x), peakOf(psOut), peakOf(vcOut), gp, gv);
-    std::fclose(m);
-}
-
-void runExcerpt(const Excerpt& e, const std::string& listen, std::vector<Row>& rows)
+void runExcerpt(const Excerpt& e, std::vector<Row>& rows)
 {
     const auto srcHf = highShareDb(e.x, e.sr);
     for (const auto shift : { -12.0, -5.0, -2.0, 2.0, 7.0, 12.0 })
         for (const auto amount : { 0.0, 0.5, 1.0 })
         {
-            double msP = 0.0, msV = 0.0;
-            const auto ps = render("psola", e, shift, amount, msP), vc = render("vocoder", e, shift, amount, msV);
-            rows.push_back(measure(e, "psola", shift, amount, ps, msP, srcHf));
-            rows.push_back(measure(e, "vocoder", shift, amount, vc, msV, srcHf));
-            if (! listen.empty() && isListenCase(shift, amount)) exportListen(e, listen, shift, amount, ps, vc);
+            double ms = 0.0;
+            const auto y = render("psola", e, shift, amount, ms);
+            rows.push_back(measure(e, "psola", shift, amount, y, ms, srcHf));
             std::fprintf(stderr, "%s %+.0f %.1f done\n", e.name.c_str(), shift, amount);
         }
 }
@@ -85,11 +49,11 @@ std::string meanTables(const std::vector<Row>& rows)
 {
     const std::string head = "| group | F0 med cents | within 20c | >50c | voiced kept | F1 err % | F2 err % | formant measurable | HF/total dB chg | pre-echo dB | voiced RMS dB | ms | clipped samples |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n";
     std::string t = "## Mean per engine and amount (mean of per-row medians over shifts and both excerpts)\n\n" + head;
-    for (const std::string eng : { "psola", "vocoder" })
+    for (const std::string eng : { "psola" })
         for (const auto am : { 0.0, 0.5, 1.0 })
             t += meanLine(eng + " amount " + std::to_string(am).substr(0, 3), rows, [&](const Row& r) { return r.engine == eng && r.amount == am; });
     t += "\n## Mean per engine and excerpt\n\n" + head;
-    for (const std::string eng : { "psola", "vocoder" })
+    for (const std::string eng : { "psola" })
         for (const std::string ex : { "A", "B" })
             t += meanLine(eng + " excerpt " + ex, rows, [&](const Row& r) { return r.engine == eng && r.ex == ex; });
     return t;
@@ -99,7 +63,7 @@ bool writeReport(const char* path, const std::vector<Row>& rows, const std::vect
 {
     std::FILE* out = std::fopen(path, "w");
     if (! out) return false;
-    std::fprintf(out, "# Real-voice comparison: PSOLA vs phase vocoder\n\nExpected formant ratio is the design formula 2^((1-a)s/12) (a = formant amount, s = shift in semitones), not a measured truth. F0 >50c: share of frames voiced in both whose F0 is more than 50 cents from source x 2^(s/12). voiced RMS dB: RMS change over source-voiced frames.\n\n");
+    std::fprintf(out, "# Real-voice comparison: PSOLA\n\nExpected formant ratio is the design formula 2^((1-a)s/12) (a = formant amount, s = shift in semitones), not a measured truth. F0 >50c: share of frames voiced in both whose F0 is more than 50 cents from source x 2^(s/12). voiced RMS dB: RMS change over source-voiced frames.\n\n");
     for (const auto* e : ex)
         std::fprintf(out, "Input excerpt %s: %.2f s, peak %.4f, samples >= 0.999: %zu\n\n", e->name.c_str(), static_cast<double>(e->x.size()) / e->sr, peakOf(e->x), countClips(e->x));
     for (const auto* e : ex)

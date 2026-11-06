@@ -1,10 +1,9 @@
-// PSOLA vs 위상 보코더 비교 측정 (JUCE 비의존, 테스트 아님)
+// PSOLA 측정 (JUCE 비의존, 테스트 아님)
 //   vt_formant_measure results.md [wavDir]
 // 합성 모음(/a/, /i/ x f0 120, 220 Hz, 5.5 Hz +-30 cent 비브라토, 0.3초 무음 뒤 급한 시작)을 이동 x 포먼트 양 x 엔진으로 렌더하고,
 // 출력 오디오만으로 포먼트(LPC 중앙값), 음정(Harvest), 프리에코, 4-8 kHz 에너지 변화, 시간을 잰다. 내부 목표값은 쓰지 않는다.
 #include "../Tests/VowelSynth.h"
 #include "../Source/Analysis/VocalFeatures.h"
-#include "../Source/Render/PhaseVocoder.h"
 #include "../Source/Render/Psola.h"
 #include "WavIO.h"
 #include <algorithm>
@@ -153,7 +152,7 @@ std::vector<float> render(const std::string& engine, const Source& src, double s
         if (src.midi[i] > 0.0) shiftCurve[i] = shift;
     const PsolaInput in{ src.x.data(), src.x.size(), sr, framePeriod, src.midi.data(), shiftCurve.data(), src.midi.size(), amountCurve.data() };
     const auto t0 = std::chrono::steady_clock::now();
-    auto y = engine == "psola" ? psolaShift(in, 0, src.x.size()) : vocoderShift(in, 0, src.x.size());
+    auto y = psolaShift(in, 0, src.x.size());
     ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     return y;
 }
@@ -219,7 +218,7 @@ void runSource(const Source& src, const std::string& dir, std::vector<Row>& rows
 {
     for (const auto shift : { -12.0, -5.0, 7.0, 12.0 })
         for (const auto amount : { 0.0, 0.5, 1.0 })
-            for (const std::string engine : { "psola", "vocoder" })
+            for (const std::string engine : { "psola" })
             {
                 double ms = 0.0;
                 const auto y = render(engine, src, shift, amount, ms);
@@ -233,11 +232,11 @@ bool writeReport(const char* path, const std::string& table, const std::vector<R
 {
     std::FILE* out = std::fopen(path, "w");
     if (! out) return false;
-    std::fprintf(out, "# PSOLA vs phase vocoder\n\nF1/F2: measured / expected (error Hz); expected is the design formula source formant x 2^((1-a)s/12), not a measured truth. >50c: share of frames voiced in both whose F0 is more than 50 cents from source x 2^(s/12). F0 err: median |cents| vs source F0 x 2^(shift/12). voiced: share of voiced source frames Harvest finds voiced in the output.\n"
+    std::fprintf(out, "# PSOLA formant/pitch measurement\n\nF1/F2: measured / expected (error Hz); expected is the design formula source formant x 2^((1-a)s/12), not a measured truth. >50c: share of frames voiced in both whose F0 is more than 50 cents from source x 2^(s/12). F0 err: median |cents| vs source F0 x 2^(shift/12). voiced: share of voiced source frames Harvest finds voiced in the output.\n"
                       "pre-echo: dB of output energy in the 50 ms before onset relative to source energy in the 50 ms after onset. HF: change of 4-8 kHz energy vs source (dB; the synthetic source has almost no HF, so small absolute levels read as large changes). HF/total: output 4-8 kHz energy relative to the output's total energy (dB, absolute). ms: render time.\n\n"
                       "| engine | vowel | f0 | shift | amount | F1 | F2 | F0 err cents | >50c | voiced | pre-echo dB | HF dB | HF/total dB | ms |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n%s\n", table.c_str());
-    std::fprintf(out, "## Mean over the grid\n\n| engine | F1 abs err | F2 abs err | F0 err cents | >50c | voiced | pre-echo dB | HF dB | HF/total dB | ms |\n|---|---|---|---|---|---|---|---|---|---|\n%s%s",
-                 summaryText("psola", rows).c_str(), summaryText("vocoder", rows).c_str());
+    std::fprintf(out, "## Mean over the grid\n\n| engine | F1 abs err | F2 abs err | F0 err cents | >50c | voiced | pre-echo dB | HF dB | HF/total dB | ms |\n|---|---|---|---|---|---|---|---|---|---|\n%s",
+                 summaryText("psola", rows).c_str());
     std::fclose(out);
     return true;
 }
