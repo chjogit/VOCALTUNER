@@ -193,18 +193,12 @@ std::vector<float> psolaShift(const PsolaInput& in, size_t beginSample, size_t e
     return psolaShiftExact(in, beginSample, endSample);
 }
 
-std::vector<float> psolaShiftExact(const PsolaInput& in, size_t beginSample, size_t endSample)
+namespace
 {
-    endSample = std::min(endSample, in.length);
-    std::vector<float> y(in.samples + beginSample, in.samples + std::max(beginSample, endSample));
-    if (beginSample >= endSample || in.frames == 0)
-        return y;
+// 유성 구간마다 합성하고, 합성한 곳을 mask에 1로 표시 (mask[0]은 표본 beginSample)
+void synthesizeRuns(const PsolaInput& in, size_t beginSample, size_t endSample, Synth& s, std::vector<double>& mask)
+{
     const auto marks = pitchMarks(in, beginSample, endSample);
-    Synth s;
-    s.offset = beginSample;
-    s.out.assign(y.size(), 0.0);
-    s.weight.assign(y.size(), 0.0);
-    std::vector<double> mask(y.size(), 0.0);
     const auto toSample = [&](size_t frame) { return static_cast<long>(static_cast<double>(frame) * in.framePeriodSec * in.sampleRate); };
     for (const auto& [fa, fb] : activeRuns(in, frameOf(in, static_cast<double>(beginSample)), frameOf(in, static_cast<double>(endSample)) + 1))
     {
@@ -217,11 +211,31 @@ std::vector<float> psolaShiftExact(const PsolaInput& in, size_t beginSample, siz
         for (auto i = ms.front(); i < ms.back(); ++i)
             mask[static_cast<size_t>(i) - beginSample] = 1.0;
     }
-    const auto w = mixWeight(in, mask, beginSample);
+}
+} // namespace
+
+std::vector<float> psolaShiftExact(const PsolaInput& in, size_t beginSample, size_t endSample)
+{
+    endSample = std::min(endSample, in.length);
+    std::vector<float> y(in.samples + beginSample, in.samples + std::max(beginSample, endSample));
+    if (beginSample >= endSample || in.frames == 0)
+        return y;
+    Synth s;
+    s.offset = beginSample;
+    s.out.assign(y.size(), 0.0);
+    s.weight.assign(y.size(), 0.0);
+    std::vector<double> mask(y.size(), 0.0);
+    synthesizeRuns(in, beginSample, endSample, s, mask);
+    auto w = mixWeight(in, mask, beginSample);
     for (size_t i = 0; i < y.size(); ++i)
-        if (w[i] > 0.0 && s.weight[i] > 1e-3)
+    {
+        const auto mixed = w[i] > 0.0 && s.weight[i] > 1e-3;   // 합성이 실제로 섞인 표본만 (음량 보정도 같은 조건)
+        w[i] = mixed ? w[i] : 0.0;
+        if (mixed)
             y[i] = static_cast<float>((1.0 - w[i]) * y[i] + w[i] * s.out[i] / s.weight[i]);
+    }
     if (in.levelMatch)
-        applyLevelMatch(y, std::vector<float>(in.samples + beginSample, in.samples + endSample), w, in.sampleRate);
+        applyLevelMatch(y, std::vector<float>(in.samples + beginSample, in.samples + endSample), w, in.sampleRate, beginSample);
     return y;
 }
+

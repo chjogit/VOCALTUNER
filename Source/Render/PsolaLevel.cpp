@@ -1,6 +1,7 @@
 #include "PsolaLevel.h"
 #include <algorithm>
 #include <cmath>
+#include <deque>
 
 namespace psola
 {
@@ -13,9 +14,11 @@ Sums prefixSums(const std::vector<float>& y, const std::vector<float>& ref, cons
     Sums s{ std::vector<double>(y.size() + 1, 0.0), std::vector<double>(y.size() + 1, 0.0), std::vector<double>(y.size() + 1, 0.0) };
     for (size_t i = 0; i < y.size(); ++i)
     {
-        s.ref[i + 1] = s.ref[i] + weight[i] * ref[i] * ref[i];
-        s.out[i + 1] = s.out[i] + weight[i] * y[i] * y[i];
-        s.w[i + 1] = s.w[i] + weight[i];
+        const auto r = weight[i] * ref[i] * ref[i], o = weight[i] * y[i] * y[i];
+        const auto ok = std::isfinite(r) && std::isfinite(o);   // NaN/Inf 표본은 gain 계산에서 뺀다 (0 dB)
+        s.ref[i + 1] = s.ref[i] + (ok ? r : 0.0);
+        s.out[i + 1] = s.out[i] + (ok ? o : 0.0);
+        s.w[i + 1] = s.w[i] + (ok ? weight[i] : 0.0);
     }
     return s;
 }
@@ -23,11 +26,13 @@ Sums prefixSums(const std::vector<float>& y, const std::vector<float>& ref, cons
 // 창 [lo, hi)의 gain (dB). 합성 비중이 낮거나 무음이면 0
 double windowGainDb(const Sums& s, size_t lo, size_t hi)
 {
+    if (hi <= lo) return 0.0;
     const auto w = s.w[hi] - s.w[lo];
     if (w < 0.25 * static_cast<double>(hi - lo)) return 0.0;
     const auto src = std::sqrt((s.ref[hi] - s.ref[lo]) / w), out = std::sqrt((s.out[hi] - s.out[lo]) / w);
     if (src < levelGateRms || out < 1e-9) return 0.0;
-    return std::clamp(20.0 * std::log10(src / out), -levelMaxDb, levelMaxDb);
+    const auto db = 20.0 * std::log10(src / out);
+    return std::isfinite(db) ? std::clamp(db, -levelMaxDb, levelMaxDb) : 0.0;
 }
 
 std::vector<double> boxSmooth(const std::vector<double>& x, size_t radius)
@@ -50,40 +55,74 @@ void limitSlew(std::vector<double>& g)
     for (size_t i = g.size(); i-- > 1;) g[i - 1] = std::clamp(g[i - 1], g[i] - levelSlewDb, g[i] + levelSlewDb);
 }
 
-double gainAt(const std::vector<double>& db, size_t i, size_t hop)
+// 표본 i의 gain. 창 중심은 off + k * hop (off보다 앞은 첫 gain)
+double gainAt(const std::vector<double>& db, size_t i, size_t hop, size_t off)
 {
-    const auto k = std::min(i / hop, db.size() - 1), k2 = std::min(k + 1, db.size() - 1);
-    const auto f = static_cast<double>(i % hop) / static_cast<double>(hop);
+    if (i < off) return std::pow(10.0, db[0] / 20.0);
+    const auto k = std::min((i - off) / hop, db.size() - 1), k2 = std::min(k + 1, db.size() - 1);
+    const auto f = static_cast<double>((i - off) % hop) / static_cast<double>(hop);
     return std::pow(10.0, ((1.0 - f) * db[k] + f * db[k2]) / 20.0);
+}
+
+// 표본 i 둘레 win 표본 안 |ref|의 최대 (슬라이딩 최대)
+std::vector<float> localPeaks(const std::vector<float>& ref, size_t win)
+{
+    std::vector<float> peak(ref.size());
+    std::deque<size_t> q;
+    size_t next = 0;
+    for (size_t i = 0; i < ref.size(); ++i)
+    {
+        for (; next < ref.size() && next <= i + win / 2; ++next)
+        {
+            while (! q.empty() && std::abs(ref[q.back()]) <= std::abs(ref[next])) q.pop_back();
+            q.push_back(next);
+        }
+        while (q.front() + win / 2 < i) q.pop_front();
+        peak[i] = std::abs(ref[q.front()]);
+    }
+    return peak;
 }
 
 size_t hopOf(int sampleRate) { return std::max<size_t>(1, static_cast<size_t>(std::lround(levelHopSec * sampleRate))); }
 } // namespace
 
-std::vector<double> levelGainsDb(const std::vector<float>& y, const std::vector<float>& ref, const std::vector<double>& weight, int sampleRate)
+size_t levelGridOffset(size_t origin, int sampleRate)
+{
+    const auto hop = hopOf(sampleRate);
+    return (hop - origin % hop) % hop;
+}
+
+std::vector<double> levelGainsDb(const std::vector<float>& y, const std::vector<float>& ref, const std::vector<double>& weight, int sampleRate,
+                                 size_t origin)
 {
     if (y.empty() || ref.size() != y.size() || weight.size() != y.size()) return {};
     const auto hop = hopOf(sampleRate), win = std::max<size_t>(2, static_cast<size_t>(std::lround(levelWindowSec * sampleRate)));
+    const auto off = levelGridOffset(origin, sampleRate);
     const auto sums = prefixSums(y, ref, weight);
-    std::vector<double> db(y.size() / hop + 1);
+    std::vector<double> db((y.size() + hop - 1 - std::min(off, y.size() - 1)) / hop + 1);
     for (size_t k = 0; k < db.size(); ++k)
     {
-        const auto c = k * hop;
-        db[k] = windowGainDb(sums, c > win / 2 ? c - win / 2 : 0, std::min(y.size(), c + win / 2));
+        const auto c = off + k * hop;
+        db[k] = windowGainDb(sums, c > win / 2 ? std::min(y.size(), c - win / 2) : 0, std::min(y.size(), c + win / 2));
     }
     db = boxSmooth(db, 2);
     limitSlew(db);
     return db;
 }
 
-void applyLevelMatch(std::vector<float>& y, const std::vector<float>& ref, const std::vector<double>& weight, int sampleRate)
+void applyLevelMatch(std::vector<float>& y, const std::vector<float>& ref, const std::vector<double>& weight, int sampleRate, size_t origin)
 {
-    const auto db = levelGainsDb(y, ref, weight, sampleRate);
+    const auto db = levelGainsDb(y, ref, weight, sampleRate, origin);
     if (db.empty()) return;
-    const auto hop = hopOf(sampleRate);
+    const auto hop = hopOf(sampleRate), off = levelGridOffset(origin, sampleRate);
+    const auto peak = localPeaks(ref, std::max<size_t>(2, static_cast<size_t>(std::lround(levelWindowSec * sampleRate))));
     for (size_t i = 0; i < y.size(); ++i)
-        if (weight[i] > 0.0)
-            y[i] = static_cast<float>(y[i] * (1.0 + weight[i] * (gainAt(db, i, hop) - 1.0)));
+    {
+        if (weight[i] <= 0.0 || ! std::isfinite(y[i])) continue;
+        auto g = 1.0 + weight[i] * (gainAt(db, i, hop, off) - 1.0);
+        if (const auto mag = std::abs(static_cast<double>(y[i])); g > 1.0 && mag * g > peak[i]) g = std::max(1.0, peak[i] / mag);
+        y[i] = static_cast<float>(y[i] * g);
+    }
 }
 
 std::vector<double> maskWeight(const std::vector<double>& mask, int sampleRate)

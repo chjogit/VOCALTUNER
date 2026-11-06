@@ -2,6 +2,7 @@
 #include "../Source/Analysis/VocalFeatures.h"
 #include "../Source/Render/Psola.h"
 #include "../Source/Render/PsolaLevel.h"
+#include "../Source/Render/EditRenderer.h"
 #include "../Source/Render/PsolaWarp.h"
 #include <algorithm>
 #include <cmath>
@@ -28,10 +29,10 @@ struct Fixture
 {
     std::vector<float> x;
     std::vector<double> midi, shift;
-    explicit Fixture(double st)
+    explicit Fixture(double st, double peak = 0.3)
     {
         const auto n = static_cast<size_t>(1.6 * sr);
-        x = vowelsynth::synth(vowelsynth::vowelA(), f0, n, sr);
+        x = vowelsynth::synth(vowelsynth::vowelA(), f0, n, sr, peak);
         unsigned seed = 12345;
         for (size_t i = 0; i < n; ++i)
         {
@@ -106,7 +107,62 @@ void testSmooth()
     for (size_t k = 1; k < db.size(); ++k) step = std::max(step, std::abs(db[k] - db[k - 1]));
     for (const auto g : db) top = std::max(top, std::abs(g));
     std::printf("  gain curve: %zu windows, max step %.2f dB, max |gain| %.2f dB\n", db.size(), step, top);
-    check(step <= 1.0 && top <= 6.0 + 1e-9 && db.size() > 100, "level match: gain curve has no step above 1 dB and stays within +-6 dB");
+    check(step <= 0.5 + 1e-9 && top <= 6.0 + 1e-9 && db.size() > 100, "level match: gain curve has no step above 0.5 dB and stays within +-6 dB");
+}
+
+// 거의 풀스케일 입력: 보정한 출력이 표본마다 둘레 20 ms 원본 최대를 (+0.01 넘게) 넘지 않는다 (클립 방지)
+void testPeakGuard()
+{
+    Fixture fx(-2.0, 0.97);
+    const auto on = psolaShift(fx.in(true), 0, fx.x.size()), off = psolaShift(fx.in(false), 0, fx.x.size());
+    const auto half = static_cast<size_t>(0.01 * sr);
+    double worstOn = -1.0, worstOff = -1.0, peakOut = 0.0;
+    for (size_t i = 0; i < on.size(); i += 7)
+    {
+        float local = 0.0f;
+        for (auto k = i > half ? i - half : 0; k < std::min(on.size(), i + half); ++k) local = std::max(local, std::abs(fx.x[k]));
+        worstOn = std::max(worstOn, static_cast<double>(std::abs(on[i]) - local));
+        worstOff = std::max(worstOff, static_cast<double>(std::abs(off[i]) - local));
+        peakOut = std::max(peakOut, static_cast<double>(std::abs(on[i])));
+    }
+    std::printf("  peak guard -2 st: max excess over local source peak: on %+.4f, off %+.4f, out peak %.3f\n", worstOn, worstOff, peakOut);
+    check(worstOn <= 0.01, "level match: |out| <= local source peak + 0.01 on a near-full-scale fixture");
+}
+
+// 어느 구간을 렌더해도 같은 표본은 같은 값 (격자가 절대 표본에 묶임)
+void testSubRange()
+{
+    Fixture fx(7.0);
+    const auto whole = psolaShift(fx.in(true), 0, fx.x.size());
+    bool same = true;
+    for (const auto& [a, b] : { std::pair<size_t, size_t>{ 21001, 40003 }, { 30007, 50011 }, { 33333, 33999 }, { 45678, 69000 } })
+    {
+        const auto part = psolaShift(fx.in(true), a, b);
+        same = same && std::equal(part.begin(), part.end(), whole.begin() + static_cast<long>(a));
+    }
+    check(same, "level match: psolaShift sub-ranges (odd offsets) equal the whole render");
+}
+
+// renderEdited: levelMatch 꺼짐은 기본과 같고(golden이 해시를 지킨다), 켜면 달라진다
+void testRenderEdited()
+{
+    Fixture fx(7.0);
+    AudioPlanes audio;
+    audio.sampleRate = sr;
+    audio.channels = { fx.x };
+    VocalFeatures f;
+    f.timeSec.resize(fx.midi.size());
+    for (size_t i = 0; i < f.timeSec.size(); ++i) f.timeSec[i] = static_cast<double>(i) * framePeriod;
+    f.midiF0 = fx.midi;
+    f.rms.assign(fx.midi.size(), 0.5);
+    VocalBlock b;
+    b.beginFrame = 100; b.endFrame = 240; b.startSec = 0.5; b.endSec = 1.2;
+    b.baseMidi = static_cast<int>(std::lround(fx.midi[101])); b.pitchOffset = fx.midi[101] - b.baseMidi; b.tidyAmount = 0.0; b.pitchShift = 7.0;
+    RenderOptions off, on;
+    on.levelMatch = true;
+    const auto d = renderEdited(audio, f, { b }), o = renderEdited(audio, f, { b }, off), v = renderEdited(audio, f, { b }, on);
+    check(d && o && v && d->channels[0] == o->channels[0], "renderEdited: levelMatch off equals the default render");
+    check(v && v->channels[0] != o->channels[0], "renderEdited: levelMatch on differs");
 }
 
 void testWarp()
@@ -121,6 +177,7 @@ void testWarp()
     const auto on = psolaWarp(in, 0, fx.x.size());
     const auto dOff = rmsDb(off, fx.x, 0.6, 1.1), dOn = rmsDb(on, fx.x, 0.6, 1.1);
     std::printf("  warp +7 st: RMS change off %+.2f dB, on %+.2f dB\n", dOff, dOn);
+    check(std::abs(dOff) > 0.7, "the warp fixture shows the loss without level match (so the test can fail)");
     check(std::abs(dOn) <= 0.5 && on.size() == off.size(), "level match: psolaWarp voiced RMS within 0.5 dB");
     const auto part = psolaWarp(in, 20000, 30000);
     check(std::equal(part.begin(), part.end(), on.begin() + 20000), "level match: psolaWarp sub-range equals the whole render");
@@ -133,6 +190,9 @@ int main()
     testUnchanged();
     testSmooth();
     testWarp();
+    testPeakGuard();
+    testSubRange();
+    testRenderEdited();
     std::printf("%d failure(s)\n", failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -140,27 +140,26 @@ void matchWarpedLevel(const WarpInput& in, size_t a, std::vector<float>& y)
         const auto t = static_cast<double>(a + j);
         mask[j] = voicedAtOutput(in, t) && std::abs(shiftAtOutput(in, t)) > 0.01 ? 1.0 : 0.0;
     }
-    applyLevelMatch(y, sourceOnOutputTimeline(in, a, y.size()), maskWeight(mask, in.sampleRate), in.sampleRate);
+    applyLevelMatch(y, sourceOnOutputTimeline(in, a, y.size()), maskWeight(mask, in.sampleRate), in.sampleRate, a);
 }
 } // namespace
 
-std::vector<float> psolaWarp(const WarpInput& in, size_t outBegin, size_t outEnd)
+namespace
 {
-    if (outBegin >= outEnd || in.length == 0)
-        return std::vector<float>(outEnd > outBegin ? outEnd - outBegin : 0, 0.0f);
-    const auto [a, b] = outputExpandedToQuiet(in, outBegin, outEnd);
-    Warper w { in, sourceView(in), {}, {} };
+// 합성에 쓸 원본 마크 (출력 [a, b)가 가져오는 원본 둘레, 무성 틈까지 넓혀)
+std::vector<long> marksFor(const WarpInput& in, const Warper& w, size_t a, size_t b)
+{
     const auto margin = marginSec * in.sampleRate;
     const auto lo = std::max(0.0, sourceSample(in, static_cast<double>(a)) - margin);
     const auto hi = std::min(static_cast<double>(in.length), sourceSample(in, static_cast<double>(b)) + margin);
-    if (in.sourceFrames > 0 && hi > lo)
-    {
-        const auto [sa, sb] = expandedToQuiet(w.source, static_cast<size_t>(lo), static_cast<size_t>(hi));
-        w.marks = pitchMarks(w.source, sa, sb);
-    }
-    w.synth.offset = a;
-    w.synth.out.assign(b - a, 0.0);
-    w.synth.weight.assign(b - a, 0.0);
+    if (in.sourceFrames == 0 || hi <= lo)
+        return {};
+    const auto [sa, sb] = expandedToQuiet(w.source, static_cast<size_t>(lo), static_cast<size_t>(hi));
+    return pitchMarks(w.source, sa, sb);
+}
+
+void synthesizeOutput(const WarpInput& in, Warper& w, size_t a, size_t b)
+{
     const auto hop = unvoicedHop(in);
     for (double t = static_cast<double>(a); t < static_cast<double>(b);)
     {
@@ -172,6 +171,20 @@ std::vector<float> psolaWarp(const WarpInput& in, size_t outBegin, size_t outEnd
             w.unvoicedGrain(t, hop);
         }
     }
+}
+} // namespace
+
+std::vector<float> psolaWarp(const WarpInput& in, size_t outBegin, size_t outEnd)
+{
+    if (outBegin >= outEnd || in.length == 0)
+        return std::vector<float>(outEnd > outBegin ? outEnd - outBegin : 0, 0.0f);
+    const auto [a, b] = outputExpandedToQuiet(in, outBegin, outEnd);
+    Warper w { in, sourceView(in), {}, {} };
+    w.marks = marksFor(in, w, a, b);
+    w.synth.offset = a;
+    w.synth.out.assign(b - a, 0.0);
+    w.synth.weight.assign(b - a, 0.0);
+    synthesizeOutput(in, w, a, b);
     std::vector<float> y(b - a);
     for (size_t i = 0; i < y.size(); ++i)
         y[i] = w.synth.weight[i] > 1e-3 ? static_cast<float>(w.synth.out[i] / w.synth.weight[i]) : 0.0f;
