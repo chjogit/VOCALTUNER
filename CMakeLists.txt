@@ -35,6 +35,7 @@ add_library(vocaltuner_core STATIC
     Source/Analysis/BlockTransforms.cpp
     Source/Analysis/PitchFlow.cpp
     Source/Analysis/BlockHistory.cpp
+    Source/Analysis/EditState.cpp
     Source/Alignment/SpectralFrames.cpp
     Source/Alignment/SectionClassifier.cpp
     Source/Alignment/TimeWarp.cpp
@@ -174,6 +175,13 @@ if(VOCALTUNER_BUILD_TESTS)
         target_compile_options(BlockHistoryTests PRIVATE /utf-8)
     endif()
     add_test(NAME BlockHistoryTests COMMAND BlockHistoryTests)
+
+    add_executable(EditStateTests Tests/EditStateTests.cpp)
+    target_link_libraries(EditStateTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(EditStateTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME EditStateTests COMMAND EditStateTests)
 
     add_executable(RollViewportTests Tests/RollViewportTests.cpp)
     target_link_libraries(RollViewportTests PRIVATE vocaltuner_core)
