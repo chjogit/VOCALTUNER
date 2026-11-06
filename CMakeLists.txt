@@ -55,6 +55,7 @@ add_library(vocaltuner_core STATIC
     Source/Render/Psola.cpp
     Source/Render/PsolaGrain.cpp
     Source/Render/PsolaWarp.cpp
+    Source/Render/PsolaLevel.cpp
     Source/Render/ConsonantShield.cpp)
 target_include_directories(vocaltuner_core PUBLIC Source/Analysis Source/Alignment Source/Render)
 target_include_directories(vocaltuner_core PUBLIC Source/UI)
@@ -284,6 +285,13 @@ if(VOCALTUNER_BUILD_TESTS)
         target_compile_options(PsolaFormantTests PRIVATE /utf-8)
     endif()
     add_test(NAME PsolaFormantTests COMMAND PsolaFormantTests)
+
+    add_executable(PsolaLevelTests Tests/PsolaLevelTests.cpp)
+    target_link_libraries(PsolaLevelTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(PsolaLevelTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME PsolaLevelTests COMMAND PsolaLevelTests)
 
     add_executable(EditStateV1Tests Tests/EditStateV1Tests.cpp)
     target_link_libraries(EditStateV1Tests PRIVATE vocaltuner_core)

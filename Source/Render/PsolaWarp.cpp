@@ -1,5 +1,6 @@
 #include "PsolaWarp.h"
 #include "PsolaGrain.h"
+#include "PsolaLevel.h"
 #include <algorithm>
 #include <cmath>
 
@@ -115,6 +116,32 @@ struct Warper
         t += static_cast<double>(hop);
     }
 };
+// 원본을 출력 시각에 맞춰 (toSource, 선형 보간) 늘어놓은 것: 음량 비교의 기준
+std::vector<float> sourceOnOutputTimeline(const WarpInput& in, size_t a, size_t n)
+{
+    std::vector<float> ref(n);
+    const auto last = static_cast<double>(in.length - 1);
+    for (size_t j = 0; j < n; ++j)
+    {
+        const auto pos = std::clamp(sourceSample(in, static_cast<double>(a + j)), 0.0, last);
+        const auto i = static_cast<size_t>(pos), i2 = std::min(i + 1, in.length - 1);
+        const auto f = pos - static_cast<double>(i);
+        ref[j] = static_cast<float>(in.samples[i] * (1.0 - f) + in.samples[i2] * f);
+    }
+    return ref;
+}
+
+// 이동이 있는 유성 구간에서만 음량을 원본에 맞춘다. y[0]은 출력 표본 a
+void matchWarpedLevel(const WarpInput& in, size_t a, std::vector<float>& y)
+{
+    std::vector<double> mask(y.size(), 0.0);
+    for (size_t j = 0; j < y.size(); ++j)
+    {
+        const auto t = static_cast<double>(a + j);
+        mask[j] = voicedAtOutput(in, t) && std::abs(shiftAtOutput(in, t)) > 0.01 ? 1.0 : 0.0;
+    }
+    applyLevelMatch(y, sourceOnOutputTimeline(in, a, y.size()), maskWeight(mask, in.sampleRate), in.sampleRate);
+}
 } // namespace
 
 std::vector<float> psolaWarp(const WarpInput& in, size_t outBegin, size_t outEnd)
@@ -145,11 +172,10 @@ std::vector<float> psolaWarp(const WarpInput& in, size_t outBegin, size_t outEnd
             w.unvoicedGrain(t, hop);
         }
     }
-    std::vector<float> y(outEnd - outBegin);
+    std::vector<float> y(b - a);
     for (size_t i = 0; i < y.size(); ++i)
-    {
-        const auto at = outBegin + i - a;
-        y[i] = w.synth.weight[at] > 1e-3 ? static_cast<float>(w.synth.out[at] / w.synth.weight[at]) : 0.0f;
-    }
-    return y;
+        y[i] = w.synth.weight[i] > 1e-3 ? static_cast<float>(w.synth.out[i] / w.synth.weight[i]) : 0.0f;
+    if (in.levelMatch)
+        matchWarpedLevel(in, a, y);
+    return std::vector<float>(y.begin() + static_cast<long>(outBegin - a), y.begin() + static_cast<long>(outEnd - a));
 }

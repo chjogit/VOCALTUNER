@@ -101,4 +101,29 @@ inline FormantStat formantStats(const std::vector<float>& src, const std::vector
     }
     return { median(e1), median(e2), tried ? 100.0 * static_cast<double>(e1.size()) / static_cast<double>(tried) : 0.0 };
 }
+// 20 ms 창(5 ms 간격)마다 20log10(출력 RMS / 원본 RMS)의 표준편차: 유성 프레임에서 음량 보정이 얼마나 출렁이는지 (펌핑). 원본이 거의 무음인 창은 뺀다
+inline double pumpingStdDb(const std::vector<float>& src, const std::vector<float>& out, const std::vector<double>& midi, int sr)
+{
+    const auto win = static_cast<size_t>(0.02 * sr), hop = static_cast<size_t>(framePeriod * sr);
+    std::vector<double> g;
+    for (size_t c = win / 2; c + win / 2 < src.size() && c / hop < midi.size(); c += hop)
+    {
+        double es = 0.0, eo = 0.0;
+        for (size_t i = c - win / 2; i < c + win / 2; ++i) { es += static_cast<double>(src[i]) * src[i]; eo += static_cast<double>(out[i]) * out[i]; }
+        if (midi[c / hop] > 0.0 && es / static_cast<double>(win) > 1e-6) g.push_back(10.0 * std::log10((eo + 1e-20) / es));
+    }
+    if (g.size() < 2) return std::nan("");
+    double mean = 0.0, var = 0.0;
+    for (const auto v : g) mean += v / static_cast<double>(g.size());
+    for (const auto v : g) var += (v - mean) * (v - mean) / static_cast<double>(g.size());
+    return std::sqrt(var);
+}
+
+// 값들의 95 백분위수
+inline double percentile95(std::vector<double> v)
+{
+    if (v.empty()) return std::nan("");
+    std::sort(v.begin(), v.end());
+    return v[static_cast<size_t>(0.95 * static_cast<double>(v.size() - 1))];
+}
 } // namespace voicemetrics

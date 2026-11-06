@@ -1,5 +1,6 @@
 #include "Psola.h"
 #include "PsolaGrain.h"
+#include "PsolaLevel.h"
 #include <algorithm>
 #include <cmath>
 
@@ -220,5 +221,7 @@ std::vector<float> psolaShiftExact(const PsolaInput& in, size_t beginSample, siz
     for (size_t i = 0; i < y.size(); ++i)
         if (w[i] > 0.0 && s.weight[i] > 1e-3)
             y[i] = static_cast<float>((1.0 - w[i]) * y[i] + w[i] * s.out[i] / s.weight[i]);
+    if (in.levelMatch)
+        applyLevelMatch(y, std::vector<float>(in.samples + beginSample, in.samples + endSample), w, in.sampleRate);
     return y;
 }

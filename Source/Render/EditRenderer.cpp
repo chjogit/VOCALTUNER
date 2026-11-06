@@ -86,12 +86,12 @@ void keepSourceWhereUnchanged(ChunkAudio& out, const AudioPlanes& src, const std
 
 // 채널마다 PSOLA로 [start, start + samples)를 합성
 void psolaChannels(const AudioPlanes& src, const VocalFeatures& f, double period, const std::vector<double>& shift,
-                   const std::vector<double>& formant, ChunkAudio& out, size_t samples)
+                   const std::vector<double>& formant, bool levelMatch, ChunkAudio& out, size_t samples)
 {
     for (const auto& ch : src.channels)
     {
         const PsolaInput in { ch.data(), ch.size(), src.sampleRate, period, f.midiF0.data(), shift.data(), f.size(),
-                              formant.empty() ? nullptr : formant.data() };
+                              formant.empty() ? nullptr : formant.data(), levelMatch };
         auto y = psolaShift(in, out.startSample, out.startSample + samples);
         y.resize(samples, 0.0f);
         out.channels.push_back(std::move(y));
@@ -108,7 +108,7 @@ ChunkAudio psolaChunk(const AudioPlanes& src, const VocalFeatures& f, const Edit
     const auto wide = spanToQuiet(f, grid, span);
     const auto shift = shieldedShift(src.channels[0].data(), src.channels[0].size(), src.sampleRate, period,
                                      psolaShiftCurve(f, grid, wide, tolerance), wide.begin, wide.end);
-    psolaChannels(src, f, period, shift, psolaFormantCurve(f, grid, wide), out, range.count);
+    psolaChannels(src, f, period, shift, psolaFormantCurve(f, grid, wide), grid.levelMatch, out, range.count);
     return out;
 }
 
@@ -126,7 +126,8 @@ ChunkAudio warpChunk(const AudioPlanes& src, const VocalFeatures& f, const EditG
     {
         const WarpInput in { ch.data(), ch.size(), src.sampleRate, period, f.midiF0.data(), f.size(), shift.data(), shift.size(),
                              [map](double t) { return map->toSource(t); }, [map](double s) { return map->toDisplay(s); },
-                             grid.formantEdited && grid.formantAmount.size() == shift.size() ? grid.formantAmount.data() : nullptr };
+                             grid.formantEdited && grid.formantAmount.size() == shift.size() ? grid.formantAmount.data() : nullptr,
+                             grid.levelMatch };
         out.channels.push_back(psolaWarp(in, out.startSample, out.startSample + samples));
     }
     keepSourceWhereUnchanged(out, src, renderedShare(grid, span, tolerance, period), period);
@@ -212,13 +213,20 @@ bool changesAudio(const std::vector<VocalBlock>& blocks, const VocalFeatures& fe
     return gainChanges || rangeChanges(grid, 0, grid.size(), unchangedSemitones);
 }
 
+static EditGrid gridFor(const AudioPlanes& source, const VocalFeatures& features, const std::vector<VocalBlock>& blocks, const RenderOptions& options)
+{
+    auto grid = buildGrid(source.length(), source.sampleRate, features, blocks);
+    grid.levelMatch = options.levelMatch;
+    return grid;
+}
+
 std::optional<AudioPlanes> renderEdited(const AudioPlanes& source, const VocalFeatures& features, const std::vector<VocalBlock>& blocks,
                                         const RenderOptions& options)
 {
     if (source.channels.empty() || features.size() == 0)
         return source;
     const auto period = features.framePeriodMs / 1000.0;
-    const auto grid = buildGrid(source.length(), source.sampleRate, features, blocks);
+    const auto grid = gridFor(source, features, blocks, options);
     const auto spans = splitChunks(grid.size(), period, options.chunkSeconds);
     std::vector<ChunkAudio> chunks(spans.size());
     std::atomic<bool> cancelled{false};
@@ -257,7 +265,7 @@ std::optional<RenderedSegment> renderEditedRange(const AudioPlanes& source, cons
     if (options.shouldCancel && options.shouldCancel())
         return std::nullopt;
     const auto period = features.framePeriodMs / 1000.0;
-    const auto grid = buildGrid(source.length(), source.sampleRate, features, blocks);
+    const auto grid = gridFor(source, features, blocks, options);
     const auto toFrame = [&](size_t sample) { return std::min(grid.size(), static_cast<size_t>(static_cast<double>(sample) / source.sampleRate / period)); };
     const auto pad = static_cast<size_t>(padSeconds / period);
     const auto a = toFrame(beginSample), b = std::max(a + 1, toFrame(endSample) + 1);
