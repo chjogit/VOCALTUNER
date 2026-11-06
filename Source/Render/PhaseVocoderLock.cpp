@@ -13,10 +13,20 @@ FrameFft::FrameFft(size_t size)
     bwd = fft_plan_dft_c2r_1d(len, reinterpret_cast<fft_complex*>(freqIn.data()), timeOut.data(), FFT_ESTIMATE);
 }
 
-FrameFft::~FrameFft() { fft_destroy_plan(fwd); fft_destroy_plan(bwd); }
+bool FrameFft::ok() const noexcept
+{
+    return fwd.w != nullptr && fwd.ip != nullptr && fwd.input != nullptr && bwd.w != nullptr && bwd.ip != nullptr && bwd.input != nullptr;
+}
+
+FrameFft::~FrameFft()
+{
+    if (fwd.w != nullptr && fwd.ip != nullptr && fwd.input != nullptr) fft_destroy_plan(fwd);
+    if (bwd.w != nullptr && bwd.ip != nullptr && bwd.input != nullptr) fft_destroy_plan(bwd);
+}
 
 void FrameFft::forward(const std::vector<double>& frame, Spec& out)
 {
+    if (! ok()) return;
     std::copy(frame.begin(), frame.end(), timeIn.begin());
     fft_execute(fwd);
     out.re.resize(n / 2 + 1);
@@ -26,6 +36,7 @@ void FrameFft::forward(const std::vector<double>& frame, Spec& out)
 
 void FrameFft::inverse(const Spec& spec, std::vector<double>& frame)
 {
+    if (! ok()) return;
     for (size_t k = 0; k < spec.re.size(); ++k) { freqIn[2 * k] = spec.re[k]; freqIn[2 * k + 1] = spec.im[k]; }
     freqIn[1] = 0.0;
     freqIn[n + 1] = 0.0;

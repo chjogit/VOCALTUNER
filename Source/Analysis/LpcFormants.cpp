@@ -92,18 +92,21 @@ Cx polyAt(const std::vector<double>& a, Cx z)
     return v;
 }
 
+constexpr int maxNudges = 8;
+
 // 다른 근들과의 차이의 곱. 근이 겹쳐 0이면 z[k]를 살짝 밀어 나눗셈이 터지지 않게 한다
 Cx separation(std::vector<Cx>& z, size_t k)
 {
     Cx den = 1.0;
-    for (size_t j = 0; j < z.size(); ++j)
-        if (j != k) den *= z[k] - z[j];
-    if (std::abs(den) < 1e-30)
+    for (int nudge = 0; nudge < maxNudges; ++nudge)
     {
+        den = 1.0;
+        for (size_t j = 0; j < z.size(); ++j)
+            if (j != k) den *= z[k] - z[j];
+        if (std::abs(den) >= 1e-30) return den;
         z[k] += Cx(1e-6, 1e-6) * (1.0 + static_cast<double>(k));
-        return separation(z, k);
     }
-    return den;
+    return Cx(1e-30, 0.0);   // 계속 겹치면 나눗셈만 막고 넘어간다 (근 찾기는 반복 상한으로 끝난다)
 }
 
 // 한 번 갱신하고 가장 큰 이동량을 돌려준다

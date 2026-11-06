@@ -133,27 +133,29 @@ ChunkAudio warpChunk(const AudioPlanes& src, const VocalFeatures& f, const EditG
     return out;
 }
 
+// 바뀌는 곳이 없는 구간: 원본 샘플을 그대로 복사
+ChunkAudio sourceChunk(const AudioPlanes& src, size_t startSample, size_t samples)
+{
+    ChunkAudio out;
+    out.startSample = startSample;
+    for (const auto& ch : src.channels)
+    {
+        std::vector<float> seg(samples, 0.0f);
+        for (size_t i = 0; i < samples && startSample + i < ch.size(); ++i)
+            seg[i] = ch[startSample + i];
+        out.channels.push_back(std::move(seg));
+    }
+    return out;
+}
+
 ChunkAudio renderChunk(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span, double tolerance)
 {
-    const auto period = f.framePeriodMs / 1000.0;
-    const auto range = sampleRangeOf(src, f, span);
-    ChunkAudio out;
-    out.startSample = range.start;
-    const auto samples = range.count;
     if (! rangeChanges(grid, span.begin, span.end, tolerance))
     {
-        for (const auto& ch : src.channels)
-        {
-            std::vector<float> seg(samples, 0.0f);
-            for (size_t i = 0; i < samples && out.startSample + i < ch.size(); ++i)
-                seg[i] = ch[out.startSample + i];
-            out.channels.push_back(std::move(seg));
-        }
-        return out;
+        const auto range = sampleRangeOf(src, f, span);
+        return sourceChunk(src, range.start, range.count);
     }
-    if (! grid.timingChanged)
-        return psolaChunk(src, f, grid, span, tolerance);
-    return warpChunk(src, f, grid, span, tolerance);
+    return grid.timingChanged ? warpChunk(src, f, grid, span, tolerance) : psolaChunk(src, f, grid, span, tolerance);
 }
 
 double chunkWeight(size_t sample, const ChunkSpan& span, bool first, bool last, double period, int sampleRate) noexcept

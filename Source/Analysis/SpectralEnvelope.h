@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 // 음색(포먼트) 분석. JUCE 비의존. 포먼트 이동 합성과 측정 도구가 같이 쓴다.
@@ -10,6 +11,21 @@
 // 결과는 nfft/2 + 1개 빈의 자연로그 진폭. 빈 b의 주파수 = b * sampleRate / nfft.
 size_t trueEnvelopeFftSize(size_t n) noexcept;
 std::vector<double> trueEnvelope(const double* frame, size_t n, int sampleRate, double f0Hz);
+
+// 같은 길이의 프레임을 여러 번 분석할 때 FFT 플랜을 한 번만 만든다. 플랜을 못 만들었거나 f0가 유한하지 않으면 빈 결과
+class EnvelopeAnalyzer
+{
+public:
+    explicit EnvelopeAnalyzer(size_t frameLength);
+    ~EnvelopeAnalyzer();
+    EnvelopeAnalyzer(const EnvelopeAnalyzer&) = delete;
+    EnvelopeAnalyzer& operator=(const EnvelopeAnalyzer&) = delete;
+    std::vector<double> analyze(const double* frame, int sampleRate, double f0Hz);
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl;
+};
 
 // LPC 근으로 찾은 포먼트 (낮은 주파수부터). count개만 유효
 struct Formants

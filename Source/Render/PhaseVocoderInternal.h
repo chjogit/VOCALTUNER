@@ -18,6 +18,7 @@ public:
     ~FrameFft();
     FrameFft(const FrameFft&) = delete;
     FrameFft& operator=(const FrameFft&) = delete;
+    bool ok() const noexcept;   // 두 플랜이 만들어졌는지
     void forward(const std::vector<double>& frame, Spec& out);
     void inverse(const Spec& spec, std::vector<double>& frame);
 

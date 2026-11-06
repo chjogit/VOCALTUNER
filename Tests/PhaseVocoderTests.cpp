@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 
 // 위상 보코더 엔진: 이동 0은 원본 그대로, 음정은 목표에, 포먼트 양은 PSOLA와 같은 의미로
 namespace
@@ -119,6 +120,40 @@ void testFormants()
     check(near(src, keep, 1.0, 0.10), "vocoder: amount 1 keeps F1/F2 within 10%");
     check(near(src, move, ratio7, 0.10), "vocoder: amount 0 moves F1/F2 by 2^(7/12) within 10%");
 }
+double rmsDb(const std::vector<float>& y, const std::vector<float>& x, double from, double to)
+{
+    double ey = 0.0, ex = 0.0;
+    for (auto i = static_cast<size_t>(from * sr); i < static_cast<size_t>(to * sr); ++i) { ey += y[i] * static_cast<double>(y[i]); ex += x[i] * static_cast<double>(x[i]); }
+    return 10.0 * std::log10(ey / ex);
+}
+
+// 포먼트 이득이 에너지를 키우지 않는다: 유성 구간 RMS 변화가 모든 이동 x 양에서 0.5 dB 안
+void testLevel()
+{
+    double worst = 0.0;
+    for (const auto st : { -12.0, -5.0, 7.0, 12.0 })
+        for (const auto amount : { 0.0, 0.5, 1.0 })
+        {
+            Fixture fx(st);
+            const std::vector<double> am(fx.midi.size(), amount);
+            const auto d = rmsDb(vocoderShift(fx.in(am.data()), 0, fx.x.size()), fx.x, 0.4, 1.2);
+            worst = std::max(worst, std::abs(d));
+        }
+    std::printf("  worst |RMS change| %.2f dB\n", worst);
+    check(worst <= 0.5, "vocoder: voiced RMS follows the source within 0.5 dB (all shifts x amounts)");
+}
+
+// 유한하지 않은 이동/음정/포먼트 양은 그 프레임을 건드리지 않는다
+void testNonFinite()
+{
+    Fixture fx(7.0);
+    fx.shift[100] = std::nan("");
+    fx.midi[101] = std::numeric_limits<double>::infinity();
+    std::vector<double> am(fx.midi.size(), 1.0);
+    am[102] = std::nan("");
+    const auto y = vocoderShift(fx.in(am.data()), 0, fx.x.size());
+    check(y.size() == fx.x.size() && std::all_of(y.begin(), y.end(), [](float v) { return std::isfinite(v); }), "vocoder: non-finite curve values give finite output");
+}
 } // namespace
 
 int main()
@@ -127,6 +162,8 @@ int main()
     testShift();
     testRamp();
     testFormants();
+    testLevel();
+    testNonFinite();
     std::printf(failures == 0 ? "ALL PASSED\n" : "%d FAILED\n", failures);
     return failures == 0 ? 0 : 1;
 }

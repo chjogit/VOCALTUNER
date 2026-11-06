@@ -1,6 +1,7 @@
 #include "SpectralEnvelope.h"
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <world/fft.h>
 
 namespace
@@ -105,13 +106,25 @@ size_t trueEnvelopeFftSize(size_t n) noexcept
     return nfft;
 }
 
+struct EnvelopeAnalyzer::Impl
+{
+    explicit Impl(size_t len) : n(len), nfft(trueEnvelopeFftSize(len)), fft(nfft) {}
+    size_t n, nfft;
+    SymmetricFft fft;
+};
+
+EnvelopeAnalyzer::EnvelopeAnalyzer(size_t frameLength) : impl(frameLength >= 2 ? std::make_unique<Impl>(frameLength) : nullptr) {}
+EnvelopeAnalyzer::~EnvelopeAnalyzer() = default;
+
+std::vector<double> EnvelopeAnalyzer::analyze(const double* frame, int sampleRate, double f0Hz)
+{
+    if (frame == nullptr || sampleRate <= 0 || ! impl || ! impl->fft.ok() || ! std::isfinite(f0Hz))
+        return {};
+    return refineEnvelope(impl->fft, impl->fft.logSpectrum(frame, impl->n), cepstralOrder(impl->nfft, sampleRate, f0Hz));
+}
+
 std::vector<double> trueEnvelope(const double* frame, size_t n, int sampleRate, double f0Hz)
 {
-    if (frame == nullptr || n < 2 || sampleRate <= 0)
-        return {};
-    const auto nfft = trueEnvelopeFftSize(n);
-    SymmetricFft fft(nfft);
-    if (! fft.ok())
-        return {};
-    return refineEnvelope(fft, fft.logSpectrum(frame, n), cepstralOrder(nfft, sampleRate, f0Hz));
+    EnvelopeAnalyzer analyzer(n);
+    return analyzer.analyze(frame, sampleRate, f0Hz);
 }
