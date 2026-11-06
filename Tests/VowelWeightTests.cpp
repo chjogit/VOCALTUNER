@@ -93,7 +93,7 @@ void testVowel()
     s.append(vowel(1.5));
     const auto w = s.weights();
     std::printf("  sustained vowel: min w in middle %.3f\n", lowestIn(w, 0.3, 1.2));
-    check(lowestIn(w, 0.3, 1.2) >= 0.95, "sustained vowel: w >= 0.95 in the middle");
+    check(lowestIn(w, 0.3, 1.2) == 1.0, "sustained vowel: w == 1 exactly in the middle");
 }
 
 void testNoise()

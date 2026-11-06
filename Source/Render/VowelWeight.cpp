@@ -76,7 +76,9 @@ std::vector<double> vowelWeights(const float* x, size_t length, int sampleRate, 
         raw[i] = rawVowelWeight(feat[i]);
         voiced[i] = feat[i].voiced;
     }
-    const auto smoothed = ramped(medianed(raw, voiced), voiced);
+    auto core = medianed(raw, voiced);
+    for (auto& v : core) v = smooth(v, vowelCoreLo, vowelCoreHi);   // 가운데는 1, 램프(이동 평균)는 그 뒤에 걸어 프레임당 변화를 제한
+    const auto smoothed = ramped(core, voiced);
     return { smoothed.begin() + static_cast<long>(firstFrame - from), smoothed.begin() + static_cast<long>(lastFrame - from) };
 }
 

@@ -11,6 +11,7 @@ constexpr double vowelLowBandMinHz = 1000.0, vowelLowBandHarmonics = 5.0; // 저
 constexpr double vowelRelLevelLoDb = -24.0, vowelRelLevelHiDb = -12.0;   // 주변 유성 최대 레벨 대비 dB
 constexpr double vowelFlatnessHi = 0.04, vowelFlatnessLo = 0.20;         // 스펙트럼 평탄도 (낮을수록 모음; 높으면 숨소리)
 constexpr double vowelFlatBandLowHz = 100.0, vowelFlatBandHighHz = 6000.0;
+constexpr double vowelCoreLo = 0.3, vowelCoreHi = 0.7;                   // 평활한 w를 이 구간에서 smoothstep: 모음 가운데는 정확히 1 (전체 이동), 낮은 곳은 0
 constexpr size_t vowelLevelRadiusFrames = 30;                            // 레벨 기준 이웃 +-150 ms
 constexpr size_t vowelMedianRadius = 1;                                  // 중앙값 3프레임 (15 ms)
 constexpr size_t vowelRampRadius = 3;                                    // 이동 평균 7프레임: w가 약 35 ms에 걸쳐 변한다 (프레임당 <= 0.15)
@@ -28,7 +29,7 @@ std::vector<VowelFeatures> vowelFeatures(const float* samples, size_t length, in
 // 특징 하나씩의 부드러운 점수를 합친 날 가중치 (평활 전). 무성이거나 마찰음이면 0
 double rawVowelWeight(const VowelFeatures&);
 
-// 프레임별 w (결과[i] = 프레임 firstFrame + i). 중앙값 + 이동 평균으로 천천히 변한다.
+// 프레임별 w (결과[i] = 프레임 firstFrame + i). 중앙값 -> 코어 smoothstep -> 이동 평균. 이웃이 모두 높은 모음 가운데는 정확히 1이고, 경계에서 천천히 변한다.
 // 앞뒤 +-(레벨 이웃 + 평활 반경) 프레임까지 보므로 구간 렌더와 전체 렌더의 값이 같다. sourceMidi == 0 이면 0
 std::vector<double> vowelWeights(const float* samples, size_t length, int sampleRate, double framePeriodSec,
                                  const double* sourceMidi, size_t frames, size_t firstFrame, size_t lastFrame);

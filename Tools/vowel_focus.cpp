@@ -15,14 +15,14 @@ void report(const vf::Take& t, const std::string& out, std::FILE* md, std::FILE*
     double total = 0.0;
     for (const auto& s : segs) total += static_cast<double>(s.end - s.begin) * voicemetrics::framePeriod;
     std::fprintf(md, "\n## %s: w<0.5 segments (voiced, >= 20 ms): %zu, total %.2f s\n\n", t.name.c_str(), segs.size(), total);
-    std::fprintf(md, "| shift | engine | F0 within 20c of full shift (w>=0.8) | within 20c of applied shift (w>=0.8) | voiced w<0.5 share | mean abs shift on w<0.5 | HF p95 dB | voiced RMS dB |\n|---|---|---|---|---|---|---|---|\n");
+    std::fprintf(md, "| shift | engine | F0 within 20c of full shift (w>=0.8) | within 20c of applied shift (w>=0.8) | within 20c of full shift (w=1 interior cores (+-40 ms all w=1)) | voiced w<0.5 share | mean abs shift on w<0.5 | HF p95 dB | voiced RMS dB |\n|---|---|---|---|---|---|---|---|---|\n");
     for (const auto st : { -2.0, 2.0, 5.0 })
     {
         const auto cur = vf::render(t, st, false), foc = vf::render(t, st, true);
         for (const auto& [label, r] : { std::pair<const char*, const vf::Render*>{ "current", &cur }, { "vowelFocus", &foc } })
         {
             const auto m = vf::measureRender(t, *r, st);
-            std::fprintf(md, "| %+.0f | %s | %.1f%% (n=%zu) | %.1f%% | %.1f%% | %.2f st | %+.1f | %+.2f |\n", st, label, m.within20, m.strong, m.withinApplied, m.lowShare, m.lowShift, m.hfSpike, m.levelDb);
+            std::fprintf(md, "| %+.0f | %s | %.1f%% (n=%zu) | %.1f%% | %.1f%% (n=%zu) | %.1f%% | %.2f st | %+.1f | %+.2f |\n", st, label, m.within20, m.strong, m.withinApplied, m.withinCore, m.core, m.lowShare, m.lowShift, m.hfSpike, m.levelDb);
         }
         char name[80];
         std::snprintf(name, sizeof name, "/listen/%s_%+.0fst.wav", t.name.c_str(), st);

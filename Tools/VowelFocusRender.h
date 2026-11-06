@@ -17,26 +17,36 @@ inline Render render(const Take& t, double semitones, bool focus)
     return { shift, psolaShift(in, 0, t.x.size()) };
 }
 
-struct Metrics { double within20 = 0, withinApplied = 0, lowShare = 0, lowShift = 0, hfSpike = 0, levelDb = 0; size_t strong = 0; };
+// 앞뒤 8프레임(40 ms)이 모두 w=1인 프레임: 출력 F0 추정 창이 이동 변화 구간에 걸리지 않는다
+inline bool interior(const Take& t, size_t i)
+{
+    for (size_t k = i > 8 ? i - 8 : 0; k <= std::min(t.w.size() - 1, i + 8); ++k)
+        if (t.w[k] < 0.999) return false;
+    return true;
+}
+
+struct Metrics { double within20 = 0, withinApplied = 0, withinCore = 0, lowShare = 0, lowShift = 0, hfSpike = 0, levelDb = 0; size_t strong = 0, core = 0; };
 
 // w >= 0.8 프레임의 F0 정확도 (Harvest on 출력 vs 원본 + 이동), w < 0.5 유성 프레임 비율과 그 프레임의 평균 |이동|, HF 스파이크, 유성 RMS 변화
 inline Metrics measureRender(const Take& t, const Render& r, double semitones)
 {
     const auto mo = harvestMidi(r.y, t.sr, 40.0);
     Metrics m;
-    size_t good = 0, goodApplied = 0, voiced = 0, low = 0;
+    size_t good = 0, goodApplied = 0, goodCore = 0, voiced = 0, low = 0;
     double lowSum = 0.0;
     for (size_t i = 0; i < t.midi.size() && i < mo.size(); ++i)
     {
         if (t.midi[i] <= 0.0) continue;
         ++voiced;
         if (t.w[i] < 0.5) { ++low; lowSum += std::abs(r.shift[i]); }
+        if (t.w[i] >= 0.999 && interior(t, i)) { ++m.core; goodCore += mo[i] > 0.0 && std::abs(mo[i] - t.midi[i] - semitones) * 100.0 <= 20.0; }
         if (t.w[i] < 0.8) continue;
         ++m.strong;
         good += mo[i] > 0.0 && std::abs(mo[i] - t.midi[i] - semitones) * 100.0 <= 20.0;
         goodApplied += mo[i] > 0.0 && std::abs(mo[i] - t.midi[i] - r.shift[i]) * 100.0 <= 20.0;
     }
     m.within20 = m.strong ? 100.0 * static_cast<double>(good) / static_cast<double>(m.strong) : 0.0;
+    m.withinCore = m.core ? 100.0 * static_cast<double>(goodCore) / static_cast<double>(m.core) : 0.0;
     m.withinApplied = m.strong ? 100.0 * static_cast<double>(goodApplied) / static_cast<double>(m.strong) : 0.0;
     m.lowShare = voiced ? 100.0 * static_cast<double>(low) / static_cast<double>(voiced) : 0.0;
     m.lowShift = low ? lowSum / static_cast<double>(low) : 0.0;
