@@ -83,6 +83,57 @@ void keepSourceWhereUnchanged(ChunkAudio& out, const AudioPlanes& src, const std
         }
 }
 
+// 박자 변경 구간 안에서 '그대로 옮기기만 하는' 곳(대응 기울기가 1이고 음정 이동이 없는 곳: EditTimeMap이 숨·자음·잡음·어택을
+// 고정으로 둔 조각)은 PSOLA 결과 대신 원본을 그 시간만큼 옮겨 그대로 쓴다. PSOLA는 유성 구간의 클릭·잡음을 조각마다 되풀이해
+// 거슬리지 않던 녹음 잡음을 '틱'으로 만들었다. 경계는 5 ms로 섞는다.
+void copyRigidMoves(ChunkAudio& out, const AudioPlanes& src, const EditGrid& grid, const std::vector<double>& shift, double period,
+                    double tolerance)
+{
+    if (grid.timeMap == nullptr || out.channels.empty())
+        return;
+    const auto rate = static_cast<double>(src.sampleRate);
+    const auto n = out.channels.front().size();
+    std::vector<double> mask(n, 0.0);
+    const auto probe = 0.004;
+    for (size_t i = 0; i < n; ++i)
+    {
+        const auto t = static_cast<double>(out.startSample + i) / rate;
+        const auto s = grid.timeMap->toSource(t);
+        const bool rigid = std::abs(grid.timeMap->toSource(t + probe) - s - probe) < 1e-7 && std::abs(s - grid.timeMap->toSource(t - probe) - probe) < 1e-7;
+        const auto frame = std::min(shift.size() - 1, static_cast<size_t>(std::max(0.0, t / period)));
+        mask[i] = rigid && (shift.empty() || std::abs(shift[frame]) <= tolerance) ? 1.0 : 0.0;
+    }
+    // 5 ms 이동 평균으로 경계를 부드럽게 (가장자리는 안쪽으로 줄어들도록 최소값 뒤 평균)
+    const auto half = static_cast<size_t>(0.0025 * rate);
+    std::vector<double> eroded(n, 0.0), smooth(n, 0.0), prefix(n + 1, 0.0);
+    for (size_t i = 0; i < n; ++i)
+    {
+        double m = 1.0;
+        for (auto k = i >= half ? i - half : 0; k <= std::min(n - 1, i + half) && m > 0.0; ++k) m = std::min(m, mask[k]);
+        eroded[i] = m;
+    }
+    for (size_t i = 0; i < n; ++i) prefix[i + 1] = prefix[i] + eroded[i];
+    for (size_t i = 0; i < n; ++i)
+    {
+        const auto lo = i >= half ? i - half : 0, hi = std::min(n, i + half + 1);
+        smooth[i] = (prefix[hi] - prefix[lo]) / static_cast<double>(hi - lo);
+    }
+    for (size_t c = 0; c < out.channels.size(); ++c)
+    {
+        const auto& x = src.channels[c];
+        for (size_t i = 0; i < n; ++i)
+        {
+            if (smooth[i] <= 0.0) continue;
+            const auto pos = grid.timeMap->toSource(static_cast<double>(out.startSample + i) / rate) * rate;
+            const auto k = static_cast<long>(std::floor(pos));
+            if (k < 0 || k + 1 >= static_cast<long>(x.size())) continue;
+            const auto f = pos - static_cast<double>(k);
+            const auto original = (1.0 - f) * x[static_cast<size_t>(k)] + f * x[static_cast<size_t>(k + 1)];
+            out.channels[c][i] = static_cast<float>((1.0 - smooth[i]) * out.channels[c][i] + smooth[i] * original);
+        }
+    }
+}
+
 // 채널마다 PSOLA로 [start, start + samples)를 합성
 void psolaChannels(const AudioPlanes& src, const VocalFeatures& f, double period, const std::vector<double>& shift,
                    const std::vector<double>& formant, bool levelMatch, ChunkAudio& out, size_t samples)
@@ -128,6 +179,7 @@ ChunkAudio warpChunk(const AudioPlanes& src, const VocalFeatures& f, const EditG
                              grid.levelMatch };
         out.channels.push_back(psolaWarp(in, out.startSample, out.startSample + samples));
     }
+    copyRigidMoves(out, src, grid, shift, period, tolerance);
     keepSourceWhereUnchanged(out, src, renderedShare(grid, span, tolerance, period), period);
     return out;
 }

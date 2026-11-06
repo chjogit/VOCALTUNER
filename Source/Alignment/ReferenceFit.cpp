@@ -91,8 +91,11 @@ void keepGapsRigid(std::vector<VocalBlock>& fitted, const std::vector<VocalBlock
     constexpr double shortGapSec = 0.25;
     const auto setEnd = [](VocalBlock& b, double end) { b.endOffsetSec = end - b.endSec; };
     const auto setStart = [](VocalBlock& b, double start) { b.startOffsetSec = start - b.startSec; };
+    // 자음과 아주 짧은 유성 블록(늘일 모음이 거의 없다: 어택·클릭이 대부분)은 길이를 그대로 두고 옮기기만 한다
+    constexpr double shortVoicedSec = 0.1;
+    const auto rigid = [&](size_t i) { return baseline[i].isConsonant || baseline[i].displayEndSec() - baseline[i].displayStartSec() < shortVoicedSec; };
     for (size_t i = 0; i < fitted.size(); ++i)
-        if (fitted[i].isConsonant)
+        if (rigid(i))
             setEnd(fitted[i], fitted[i].displayStartSec() + (baseline[i].displayEndSec() - baseline[i].displayStartSec()));
     for (size_t i = 0; i + 1 < fitted.size(); ++i)
     {
@@ -103,13 +106,13 @@ void keepGapsRigid(std::vector<VocalBlock>& fitted, const std::vector<VocalBlock
         auto& b = fitted[i + 1];
         // 맡는 유성 블록은 원래 길이의 0.8~1.25배 안에서만 (그 밖이면 틈이 조금 늘거나 준다)
         constexpr double shortest = 0.8, longest = 1.25;
-        if (! a.isConsonant)
+        if (! rigid(i))
         {
             const auto length = baseline[i].displayEndSec() - baseline[i].displayStartSec();
             const auto lo = a.displayStartSec() + std::max(minBlockSeconds, shortest * length), hi = a.displayStartSec() + longest * length;
             setEnd(a, std::clamp(b.displayStartSec() - gap, lo, std::max(lo, hi)));
         }
-        else if (! b.isConsonant)
+        else if (! rigid(i + 1))
         {
             const auto length = baseline[i + 1].displayEndSec() - baseline[i + 1].displayStartSec();
             const auto lo = b.displayEndSec() - longest * length, hi = b.displayEndSec() - std::max(minBlockSeconds, shortest * length);

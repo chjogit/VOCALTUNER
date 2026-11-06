@@ -10,6 +10,7 @@
 #include "../Source/Alignment/BandAlign.h"
 #include "../Source/Alignment/ReferenceFit.h"
 #include "../Source/Render/EditGrid.h"
+#include "../Source/Render/EditTimeMap.h"
 #include "../Source/Render/EditRenderer.h"
 #include "WavIO.h"
 
@@ -125,6 +126,18 @@ int main(int argc, char** argv)
                     moved ? sum / static_cast<double>(moved) : 0.0, worstCents);
     }
     std::fclose(moves);
+    if (const char* v = std::getenv("BR_PROBE"))   // "from,to" 파일 시간: 표시 시각마다 원본 시각과 기울기, 원본 유성 여부
+    {
+        const EditTimeMap tm(fitted, *features);
+        const auto a = std::atof(v), b = std::atof(std::strchr(v, ',') + 1);
+        for (auto t = a; t <= b; t += 0.005)
+        {
+            const auto s = tm.toSource(t);
+            const auto j = static_cast<size_t>(std::lround(s / 0.005));
+            std::printf("  probe %.3f -> %.4f slope %.3f midi %.1f rms %.4f\n", t, s, (tm.toSource(t + 0.004) - tm.toSource(t - 0.004)) / 0.008,
+                        j < features->size() ? features->midiF0[j] : -1.0, j < features->size() ? features->rms[j] : -1.0);
+        }
+    }
 
     AudioPlanes source;
     source.sampleRate = tr;

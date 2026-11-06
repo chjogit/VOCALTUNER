@@ -1,5 +1,6 @@
 #include "EditTimeMap.h"
 #include <algorithm>
+#include <cmath>
 
 EditTimeMap::EditTimeMap(const std::vector<VocalBlock>& blocks)
 {
@@ -19,6 +20,71 @@ EditTimeMap::EditTimeMap(const std::vector<VocalBlock>& blocks)
         add(b.displayStartSec(), b.startSec);
         add(b.displayEndSec(), b.endSec);
     }
+}
+
+EditTimeMap::EditTimeMap(const std::vector<VocalBlock>& blocks, const VocalFeatures& f) : EditTimeMap(blocks)
+{
+    if (identity || f.size() == 0)
+        return;
+    const auto period = f.framePeriodMs / 1000.0;
+    constexpr size_t attackFrames = 8;   // 소리가 선 뒤 40 ms
+    constexpr size_t jumpFrames = 3;     // 음량이 15 ms 사이 6 dB 넘게 오른 곳(클릭·어택)과 그 뒤 15 ms
+    const auto jumps = [&](size_t j) {
+        if (j < jumpFrames || j >= f.rms.size()) return false;
+        double low = f.rms[j];
+        for (size_t k = 1; k <= jumpFrames; ++k) low = std::min(low, f.rms[j - k]);
+        return f.rms[j] > 2.0 * low + 1e-6;
+    };
+    const auto elastic = [&](size_t j) {
+        if (j >= f.size() || f.midiF0[j] <= 0.0) return false;
+        for (size_t k = 1; k <= attackFrames; ++k)
+            if (j < k || f.midiF0[j - k] <= 0.0) return false;
+        for (size_t k = 0; k <= jumpFrames; ++k)
+            if (j >= k && jumps(j - k)) return false;
+        return true;
+    };
+    std::vector<double> d2 { display.front() }, s2 { source.front() };
+    for (size_t n = 1; n < display.size(); ++n)
+    {
+        const auto s0 = source[n - 1], s1 = source[n], d0 = display[n - 1], d1 = display[n];
+        if (s1 - s0 < 1e-9 || std::abs((d1 - d0) - (s1 - s0)) < 1e-9)
+        {
+            d2.push_back(d1); s2.push_back(s1);
+            continue;
+        }
+        // [s0, s1)을 탄력/고정 조각으로
+        struct Piece { double length; bool stretch; };
+        std::vector<Piece> pieces;
+        double fixedLength = 0.0, stretchLength = 0.0;
+        for (auto t = s0; t < s1 - 1e-12;)
+        {
+            const auto j = static_cast<size_t>(std::max(0.0, std::floor(t / period + 1e-9)));
+            const auto end = std::min(s1, static_cast<double>(j + 1) * period);
+            const bool e = elastic(j);
+            if (! pieces.empty() && pieces.back().stretch == e) pieces.back().length += end - t;
+            else pieces.push_back({ end - t, e });
+            (e ? stretchLength : fixedLength) += end - t;
+            t = end;
+        }
+        if (stretchLength <= 0.0)
+        {
+            d2.push_back(d1); s2.push_back(s1);   // 모음이 없으면 고르게 (예전 방식)
+            continue;
+        }
+        // 모음 몫은 0.2~3배까지. 그래도 모자라거나 남는 만큼만 고정 조각이 고르게 나눠 맡는다
+        const auto k = std::clamp((d1 - d0 - fixedLength) / stretchLength, 0.2, 3.0);
+        const auto r = fixedLength > 0.0 ? (d1 - d0 - k * stretchLength) / fixedLength : 1.0;
+        auto d = d0, s = s0;
+        for (size_t i = 0; i < pieces.size(); ++i)
+        {
+            s += pieces[i].length;
+            d += (pieces[i].stretch ? k : r) * pieces[i].length;
+            d2.push_back(i + 1 == pieces.size() ? d1 : d);
+            s2.push_back(i + 1 == pieces.size() ? s1 : s);
+        }
+    }
+    display = std::move(d2);
+    source = std::move(s2);
 }
 
 namespace

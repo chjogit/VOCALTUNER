@@ -90,7 +90,7 @@ EditGrid buildGrid(size_t samples, int sampleRate, const VocalFeatures& f, const
     if (n == 0)
         return grid;
     grid.lastSourceFrame = static_cast<int>(f.size()) - 1;
-    grid.timeMap = std::make_shared<const EditTimeMap>(blocks);
+    grid.timeMap = std::make_shared<const EditTimeMap>(blocks, f);   // 늘임·줄임은 모음에만 (숨·자음·잡음은 그대로 옮김)
     fillSourceFrames(grid, f, *grid.timeMap, period);
     for (size_t i = 0; i < grid.size() && ! grid.timingChanged; ++i)
         grid.timingChanged = grid.sourceFrame[i] != std::min(static_cast<int>(i), grid.lastSourceFrame);
