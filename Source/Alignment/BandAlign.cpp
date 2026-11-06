@@ -221,15 +221,25 @@ TimeMap bandAlignMap(const BandFrames& reference, double referenceOffset, const 
         const auto path = alignRun(tgt, ref, begin, end, steps, hop, o);
         std::vector<double> shift(path.size());
         for (size_t i = 0; i < path.size(); ++i) shift[i] = static_cast<double>(path[i] - static_cast<long>(begin + i)) * hop;
-        double total = 0.0;
+        // 평활 -> 작은 차이는 0 (Max Difference) -> 이동량이 10 ms마다 바뀌는 폭을 maxStretch*10 ms로 제한
+        // (한 블록 안에서 늘이고 줄이는 비율의 한도. 따로 두면 DTW의 잔걸음이 그대로 늘임·줄임이 되어 소리가 뒤틀린다)
+        std::vector<double> smoothed(shift.size());
         for (size_t i = 0; i < shift.size(); ++i)
         {
             const auto lo = static_cast<size_t>(std::max<long>(0, static_cast<long>(i) - smooth));
             const auto hi = static_cast<size_t>(std::min<long>(static_cast<long>(shift.size()) - 1, static_cast<long>(i) + smooth));
             double sum = 0.0;
             for (auto m = lo; m <= hi; ++m) sum += shift[m];
-            auto s = sum / static_cast<double>(hi - lo + 1);
-            if (std::abs(s) < o.maxDifferenceSec) s = 0.0;
+            smoothed[i] = sum / static_cast<double>(hi - lo + 1);
+            if (std::abs(smoothed[i]) < o.maxDifferenceSec) smoothed[i] = 0.0;
+        }
+        const auto rate = o.maxStretch * hop;
+        for (size_t i = 1; i < smoothed.size(); ++i) smoothed[i] = std::clamp(smoothed[i], smoothed[i - 1] - rate, smoothed[i - 1] + rate);
+        for (size_t i = smoothed.size() - 1; i-- > 0;) smoothed[i] = std::clamp(smoothed[i], smoothed[i + 1] - rate, smoothed[i + 1] + rate);
+        double total = 0.0;
+        for (size_t i = 0; i < smoothed.size(); ++i)
+        {
+            const auto s = smoothed[i];
             total += s;
             const auto t = gridStart + static_cast<double>(begin + i) * hop;
             if (! from.empty() && t <= from.back()) continue;

@@ -38,7 +38,8 @@ struct BandAlignOptions
     double skipPenalty = 0.25;       // 말소리에서 기준이 두 칸 가는 걸음 (따라가는 쪽을 줄임)
     double silencePenalty = 0.02;    // 무음에서의 같은 걸음
     double shiftPenaltyPerSec = 0.0; // 원래 자리에서 멀어지는 데 주는 벌점. 평가(정답 있는 화음 20조각)에서 0.5면 최대 오차 222 ms, 0이면 25 ms
-    double smoothSec = 0.03;
+    double smoothSec = 0.06;
+    double maxStretch = 0.15;        // 이동량 변화율 한도 = 늘이고 줄이는 비율 한도 (0.15 = ±15%). VocAlign의 Flexibility에 해당
     std::function<bool()> shouldCancel;
     std::function<void(double, double, double)> onRun;   // 진단(선택): 덩어리마다 (시작, 끝 곡 시간, 평균 이동량)
 };

@@ -170,6 +170,8 @@ int main(int argc, char** argv)
         if (const char* v = std::getenv("BA_REPEAT")) bo.repeatPenalty = std::atof(v);
         if (const char* v = std::getenv("BA_SKIP")) bo.skipPenalty = std::atof(v);
         if (const char* v = std::getenv("BA_DIST")) bo.shiftPenaltyPerSec = std::atof(v);
+        if (const char* v = std::getenv("BA_STRETCH")) bo.maxStretch = std::atof(v);
+        if (const char* v = std::getenv("BA_SMOOTH")) bo.smoothSec = std::atof(v);
         const auto bandMap = bandAlignMap(refBands, 0.0, computeBandFrames(readTarget, static_cast<int64_t>(target.size()), sr), 0.0, bo);
         const auto oldEst = estimates(oldMap, segs), newEst = estimates(newMap, segs), bandEst = estimates(bandMap, segs);
         std::fprintf(md, "\n## 화음 간격 %+.0f 반음\n\n| 방식 | 조각 | 오차 중앙값 | 30 ms 안 | 최대 오차 |\n|---|---|---|---|---|\n", interval);
