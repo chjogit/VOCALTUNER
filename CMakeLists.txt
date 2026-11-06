@@ -55,6 +55,9 @@ add_library(vocaltuner_core STATIC
     Source/Render/Psola.cpp
     Source/Render/PsolaGrain.cpp
     Source/Render/PsolaWarp.cpp
+    Source/Render/PhaseVocoder.cpp
+    Source/Render/PhaseVocoderLock.cpp
+    Source/Render/PhaseVocoderFormant.cpp
     Source/Render/ConsonantShield.cpp)
 target_include_directories(vocaltuner_core PUBLIC Source/Analysis Source/Alignment Source/Render)
 target_include_directories(vocaltuner_core PUBLIC Source/UI)
@@ -285,12 +288,27 @@ if(VOCALTUNER_BUILD_TESTS)
     endif()
     add_test(NAME PsolaFormantTests COMMAND PsolaFormantTests)
 
+    add_executable(PhaseVocoderTests Tests/PhaseVocoderTests.cpp)
+    target_link_libraries(PhaseVocoderTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(PhaseVocoderTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME PhaseVocoderTests COMMAND PhaseVocoderTests)
+
     add_executable(EditStateV1Tests Tests/EditStateV1Tests.cpp)
     target_link_libraries(EditStateV1Tests PRIVATE vocaltuner_core)
     if(MSVC)
         target_compile_options(EditStateV1Tests PRIVATE /utf-8)
     endif()
     add_test(NAME EditStateV1Tests COMMAND EditStateV1Tests)
+
+    # PSOLA vs 위상 보코더 포먼트/음정/프리에코 측정 CLI (테스트 아님)
+    add_executable(vt_formant_measure Tools/formant_measure.cpp)
+    target_include_directories(vt_formant_measure PRIVATE Tools)
+    target_link_libraries(vt_formant_measure PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(vt_formant_measure PRIVATE /utf-8)
+    endif()
 
     # 원본 vs 렌더 스펙트럼 차이 CLI (테스트 아님)
     add_executable(spectral_diff Tools/spectral_diff.cpp)
