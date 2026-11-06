@@ -173,6 +173,12 @@ int main(int argc, char** argv)
         if (const char* v = std::getenv("BA_STRETCH")) bo.maxStretch = std::atof(v);
         if (const char* v = std::getenv("BA_MEDIAN")) bo.medianSec = std::atof(v);
         if (const char* v = std::getenv("BA_TRANSIENT")) bo.transientWeight = std::atof(v);
+        if (const char* v = std::getenv("BA_SSNAP")) bo.startSnapSec = std::atof(v);
+        if (const char* v = std::getenv("BA_SBLEND")) bo.startBlendSec = std::atof(v);
+        if (const char* v = std::getenv("BA_PASSES")) bo.passes = std::atoi(v);
+        if (const char* v = std::getenv("BA_SNAP")) bo.snapOnsetSec = std::atof(v);
+        if (const char* v = std::getenv("BA_SNAPW")) bo.snapWidthSec = std::atof(v);
+        if (const char* v = std::getenv("BA_ONSET")) bo.onsetThreshold = static_cast<float>(std::atof(v));
         if (const char* v = std::getenv("BA_LEVEL")) bo.levelWeight = std::atof(v);
         if (const char* v = std::getenv("BA_STRONG")) bo.strongBelowDb = std::atof(v);
         if (const char* v = std::getenv("BA_START")) bo.startPenaltyPerSec = std::atof(v);

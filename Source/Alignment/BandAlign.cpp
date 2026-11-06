@@ -53,6 +53,7 @@ struct Grid
     std::vector<std::array<float, 4>> level;
     std::vector<unsigned char> speech;
     std::vector<float> onset;   // 네 대역의 음량이 20 ms 사이에 오른 양의 합 (음절·자음 시작)
+    std::vector<float> fromPeakDb;   // 네 대역 합 전력의 dB - 트랙의 98% 지점 (소리 시작 판정용, 무음 = -120)
 };
 
 Grid placed(const BandFrames& f, double offset, double gridStart, size_t count, double thresholdDb)
@@ -71,6 +72,7 @@ Grid placed(const BandFrames& f, double offset, double gridStart, size_t count, 
     Grid g;
     g.level.assign(count, { 0.0f, 0.0f, 0.0f, 0.0f });
     g.speech.assign(count, 0);
+    g.fromPeakDb.assign(count, -120.0f);
     for (size_t k = 0; k < count; ++k)
     {
         const auto source = (gridStart + static_cast<double>(k) * f.hopSec - offset) / f.hopSec;
@@ -85,6 +87,15 @@ Grid placed(const BandFrames& f, double offset, double gridStart, size_t count, 
             loud += db > floorDb[b] + thresholdDb ? 1 : 0;
         }
         g.speech[k] = loud >= 2 ? 1 : 0;
+        double power = 0.0;
+        for (size_t b = 0; b < 4; ++b) power += std::pow(10.0, f.db[i][b] / 10.0);
+        g.fromPeakDb[k] = static_cast<float>(10.0 * std::log10(power + 1e-14));
+    }
+    {
+        std::vector<float> sorted;
+        for (const auto v : g.fromPeakDb) if (v > -119.0f) sorted.push_back(v);
+        const auto peak = sorted.empty() ? 0.0f : (std::sort(sorted.begin(), sorted.end()), sorted[sorted.size() * 98 / 100]);
+        for (auto& v : g.fromPeakDb) v = v > -119.0f ? v - peak : -120.0f;
     }
     g.onset.assign(count, 0.0f);
     for (size_t k = 2; k < count; ++k)
@@ -203,8 +214,55 @@ BandFrames computeBandFrames(const StereoReader& read, int64_t length, int rate,
     return out;
 }
 
+namespace
+{
+TimeMap alignOnce(const BandFrames& reference, double referenceOffset, const BandFrames& target, double targetOffset,
+                  const BandAlignOptions& o);
+
+// 타깃을 map대로 옮겨 놓은 대역 프레임 (옮긴 뒤의 곡 시간 = 원래 곡 시간 targetOffset부터)
+BandFrames warpedBy(const BandFrames& target, double targetOffset, const TimeMap& map)
+{
+    const TimeMap inverse(map.to(), map.from());   // 단조 증가라 뒤집으면 역함수
+    BandFrames out;
+    out.hopSec = target.hopSec;
+    out.db.resize(target.size());
+    for (size_t k = 0; k < target.size(); ++k)
+    {
+        const auto song = targetOffset + static_cast<double>(k) * target.hopSec;
+        const auto source = (inverse.map(song) - targetOffset) / target.hopSec;
+        const auto i = static_cast<size_t>(std::clamp<long>(std::lround(source), 0, static_cast<long>(target.size()) - 1));
+        out.db[k] = target.db[i];
+    }
+    return out;
+}
+} // namespace
+
 TimeMap bandAlignMap(const BandFrames& reference, double referenceOffset, const BandFrames& target, double targetOffset,
                      const BandAlignOptions& o)
+{
+    // passes > 1: 맞춘 결과를 다시 맞춘다 (한 번에는 벌점·평활 때문에 차이의 일부만 줄인다). 두 대응을 이어 붙인다
+    auto map = alignOnce(reference, referenceOffset, target, targetOffset, o);
+    for (int pass = 1; pass < o.passes && ! map.empty(); ++pass)
+    {
+        const auto next = alignOnce(reference, referenceOffset, warpedBy(target, targetOffset, map), targetOffset, o);
+        if (next.empty())
+            break;
+        std::vector<double> from, to;
+        for (size_t i = 0; i < map.from().size(); ++i)
+        {
+            const auto t = map.from()[i];
+            from.push_back(t);
+            to.push_back(std::max(to.empty() ? -1e300 : to.back(), next.map(map.to()[i])));
+        }
+        map = TimeMap(std::move(from), std::move(to));
+    }
+    return map;
+}
+
+namespace
+{
+TimeMap alignOnce(const BandFrames& reference, double referenceOffset, const BandFrames& target, double targetOffset,
+                  const BandAlignOptions& o)
 {
     if (reference.size() == 0 || target.size() == 0 || reference.hopSec != target.hopSec || target.hopSec <= 0.0)
         return {};
@@ -279,6 +337,77 @@ TimeMap bandAlignMap(const BandFrames& reference, double referenceOffset, const 
             smoothed[i] = sum / static_cast<double>(hi - lo + 1);
             if (std::abs(smoothed[i]) < o.maxDifferenceSec) smoothed[i] = 0.0;
         }
+        // 소리 시작 맞춤 (SmartAlign: 맞출 소리가 시작하는 곳끼리): 덩어리 첫 센 프레임(쉼 뒤 소리가 서는 곳)을, 지금 이동량 근처
+        // (±startSnapSec)에서 쉼 뒤 소리가 서는 기준 프레임에 맞추고, 그 차이를 덩어리 머리 startBlendSec 동안 줄여 가며 더한다
+        if (o.startSnapSec > 0.0)
+        {
+            const auto quiet = static_cast<long>(std::lround(0.08 / hop));
+            const auto reach = static_cast<long>(std::lround(o.startSnapSec / hop));
+            // 시작: 트랙 최고(98%)에서 riseBelowDb 안으로 막 올라섰고, 앞 80 ms는 모두 그 아래
+            const auto level = [](const Grid& grid, long k) { return grid.fromPeakDb[static_cast<size_t>(k)]; };
+            const auto rises = [&](const Grid& grid, long k) {
+                const auto line = -static_cast<float>(o.riseBelowDb);
+                if (k < quiet || k >= static_cast<long>(grid.level.size()) || level(grid, k) < line || level(grid, k - 1) >= line) return false;
+                for (auto q = k - quiet; q < k; ++q) if (level(grid, q) >= line) return false;
+                return true;
+            };
+            // 덩어리 안의 모든 '쉼(80 ms) 뒤 시작'에 대해: 고칠 양을 구해 그 시작 앞 80 ms ~ 뒤 startBlendSec에 삼각형으로 나눠 준다
+            std::vector<double> correction(smoothed.size(), 0.0), weight(smoothed.size(), 0.0);
+            const auto blend = std::max<long>(1, std::lround(o.startBlendSec / hop));
+            for (long i = 0; i < static_cast<long>(smoothed.size()); ++i)
+            {
+                const auto g = static_cast<long>(begin) + i;
+                if (! rises(tgt, g)) continue;
+                const auto centre = g + std::lround(smoothed[static_cast<size_t>(i)] / hop);
+                long best = -1;
+                for (long d = 0; d <= reach && best < 0; ++d)
+                    for (const auto r : { centre - d, centre + d })
+                        if (best < 0 && rises(ref, r)) best = r;
+                if (best < 0) continue;
+                const auto fix = static_cast<double>(best - g) * hop - smoothed[static_cast<size_t>(i)];
+                for (auto k = std::max<long>(0, i - quiet); k < std::min<long>(static_cast<long>(smoothed.size()), i + blend); ++k)
+                {
+                    const auto w = k <= i ? 1.0 : 1.0 - static_cast<double>(k - i) / static_cast<double>(blend);
+                    correction[static_cast<size_t>(k)] += w * fix;
+                    weight[static_cast<size_t>(k)] += w;
+                }
+            }
+            for (size_t i = 0; i < smoothed.size(); ++i)
+                if (weight[i] > 0.0) smoothed[i] += correction[i] / std::max(1.0, weight[i]);
+        }
+        // 음절 시작 맞춤 (Sync Vx의 트랜지언트 검출에 해당): 타깃의 뚜렷한 시작마다, 지금 이동량 근처(±snapOnsetSec)의
+        // 기준 시작 중 가장 뚜렷한 것에 정확히 맞도록 그 둘레(±snapWidthSec, 삼각형)의 이동량을 고친다
+        if (o.snapOnsetSec > 0.0)
+        {
+            const auto reach = static_cast<long>(std::lround(o.snapOnsetSec / hop));
+            const auto width = std::max<long>(1, std::lround(o.snapWidthSec / hop));
+            std::vector<double> correction(smoothed.size(), 0.0), weight(smoothed.size(), 0.0);
+            for (size_t i = 1; i + 1 < smoothed.size(); ++i)
+            {
+                const auto g = begin + i;
+                const auto on = tgt.onset[g];
+                if (on < o.onsetThreshold || on < tgt.onset[g - 1] || on < tgt.onset[g + 1]) continue;
+                const auto centre = static_cast<long>(g) + std::lround(smoothed[i] / hop);
+                long best = -1;
+                float bestOn = o.onsetThreshold;
+                for (auto r = centre - reach; r <= centre + reach; ++r)
+                    if (r > 0 && r + 1 < static_cast<long>(ref.onset.size()) && ref.onset[static_cast<size_t>(r)] > bestOn
+                        && ref.onset[static_cast<size_t>(r)] >= ref.onset[static_cast<size_t>(r - 1)] && ref.onset[static_cast<size_t>(r)] >= ref.onset[static_cast<size_t>(r + 1)])
+                    { best = r; bestOn = ref.onset[static_cast<size_t>(r)]; }
+                if (best < 0) continue;
+                const auto fix = static_cast<double>(best - static_cast<long>(g)) * hop - smoothed[i];
+                for (auto k = -width; k <= width; ++k)
+                {
+                    const auto j = static_cast<long>(i) + k;
+                    if (j < 0 || j >= static_cast<long>(smoothed.size())) continue;
+                    const auto w = 1.0 - std::abs(static_cast<double>(k)) / static_cast<double>(width + 1);
+                    correction[static_cast<size_t>(j)] += w * fix;
+                    weight[static_cast<size_t>(j)] += w;
+                }
+            }
+            for (size_t i = 0; i < smoothed.size(); ++i)
+                if (weight[i] > 0.0) smoothed[i] += correction[i] / std::max(1.0, weight[i]);
+        }
         const auto rate = o.maxStretch * hop;
         for (size_t i = 1; i < smoothed.size(); ++i) smoothed[i] = std::clamp(smoothed[i], smoothed[i - 1] - rate, smoothed[i - 1] + rate);
         for (size_t i = smoothed.size() - 1; i-- > 0;) smoothed[i] = std::clamp(smoothed[i], smoothed[i + 1] - rate, smoothed[i + 1] + rate);
@@ -296,3 +425,4 @@ TimeMap bandAlignMap(const BandFrames& reference, double referenceOffset, const 
     }
     return from.empty() ? TimeMap{} : TimeMap(std::move(from), std::move(to));
 }
+} // namespace

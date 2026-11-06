@@ -42,6 +42,13 @@ struct BandAlignOptions
     double transientWeight = 4.0;    // 음절·자음 시작(대역 음량이 오르는 순간)을 맞추는 무게 (Sync Vx·VocAlign의 트랜지언트 감도)
     double startPenaltyPerSec = 0.0; // 덩어리 첫 칸이 원래 자리에서 멀수록 주는 벌점
     double strongBelowDb = 6.0;      // 덩어리의 센 프레임 기준(상위 10%)에서 이만큼 작으면 약한 프레임 (이동량을 이웃 센 프레임에서 가져옴). 0 이하면 끔
+    double startSnapSec = 0.1;       // 쉼 뒤 소리 시작끼리 맞춤: 이 범위 안의 기준 시작을 찾는다 (0이면 끔)
+    double startBlendSec = 0.2;
+    double riseBelowDb = 25.0;       // 소리 시작 판정: 트랙 최고(98%)에서 이만큼 아래 선을 쉼(80 ms) 뒤 처음 넘는 곳      // 그 맞춤을 덩어리 머리에서 이 시간 동안 줄여 가며 적용
+    double snapOnsetSec = 0.0;       // 음절 시작 맞춤: 이 범위 안의 기준 시작에 맞춘다 (0이면 끔)
+    double snapWidthSec = 0.08;      // 그 맞춤이 둘레에 미치는 폭
+    float onsetThreshold = 0.25f;    // 이보다 크게 오르는 곳만 음절 시작으로 본다 (네 대역 합, 0..1 음량 기준)
+    int passes = 1;                  // 맞춘 결과를 다시 맞추는 횟수 (2면 한 번 더: Time Tightness를 한 단계 올리는 셈)
     double medianSec = 0.12;         // 이동량의 짧은 튐을 지우는 중앙값 반폭
     double smoothSec = 0.06;
     double maxStretch = 0.15;        // 이동량 변화율 한도 = 늘이고 줄이는 비율 한도 (0.15 = ±15%). VocAlign의 Flexibility에 해당
