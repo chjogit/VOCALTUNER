@@ -167,13 +167,20 @@ TimeMap guidedTimeMap(int64_t referenceLength, int referenceRate, const StereoRe
             lowMidi = std::min(lowMidi, guide[k]);
             highMidi = std::max(highMidi, guide[k]);
         }
-        if (static_cast<double>(voiced) < 0.3 * static_cast<double>(frames))
+        const auto voicedShare = static_cast<double>(voiced) / static_cast<double>(frames);
+        if (voicedShare < 0.3)
+        {
+            if (o.onWindow) o.onWindow(start, voicedShare, 0.0, 0.0);
             continue;
+        }
         const auto referenceStart = start - o.maxLagSec - referenceOffset;
         const auto salience = salienceOver(referenceStart, frames + 2 * lagSteps + 1, referenceRate, read, spectrum, o.hopSec,
                                              lowMidi - o.transposeSemitones - 1.2, highMidi + o.transposeSemitones + 1.2);
         auto score = lagScores(guide, salience, lagSteps, o.transposeSemitones);
-        if (*std::max_element(score.begin(), score.end()) < o.minConfidence)
+        const auto best = std::max_element(score.begin(), score.end());
+        if (o.onWindow)
+            o.onWindow(start, voicedShare, *best, (static_cast<double>(best - score.begin()) - static_cast<double>(lagSteps)) * o.hopSec);
+        if (*best < o.minConfidence)
             continue;
         centres.push_back(start + 0.5 * o.windowSec);
         scores.push_back(std::move(score));
