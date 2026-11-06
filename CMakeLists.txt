@@ -56,7 +56,9 @@ add_library(vocaltuner_core STATIC
     Source/Render/PsolaGrain.cpp
     Source/Render/PsolaWarp.cpp
     Source/Render/PsolaLevel.cpp
-    Source/Render/ConsonantShield.cpp)
+    Source/Render/ConsonantShield.cpp
+    Source/Render/VowelWeight.cpp
+    Source/Render/VowelFeatures.cpp)
 target_include_directories(vocaltuner_core PUBLIC Source/Analysis Source/Alignment Source/Render)
 target_include_directories(vocaltuner_core PUBLIC Source/UI)
 target_link_libraries(vocaltuner_core PUBLIC world_harvest)
@@ -265,6 +267,13 @@ if(VOCALTUNER_BUILD_TESTS)
     endif()
     add_test(NAME ConsonantShieldTests COMMAND ConsonantShieldTests)
 
+    add_executable(VowelWeightTests Tests/VowelWeightTests.cpp)
+    target_link_libraries(VowelWeightTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(VowelWeightTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME VowelWeightTests COMMAND VowelWeightTests)
+
     add_executable(SpectralDiffTests Tests/SpectralDiffTests.cpp)
     target_link_libraries(SpectralDiffTests PRIVATE vocaltuner_core)
     if(MSVC)
@@ -321,6 +330,14 @@ if(VOCALTUNER_BUILD_TESTS)
     target_link_libraries(vt_voice_compare PRIVATE vocaltuner_core)
     if(MSVC)
         target_compile_options(vt_voice_compare PRIVATE /utf-8)
+    endif()
+
+    # 모음 중심 이동 측정 CLI (테스트 아님)
+    add_executable(vt_vowel_focus Tools/vowel_focus.cpp)
+    target_include_directories(vt_vowel_focus PRIVATE Tools)
+    target_link_libraries(vt_vowel_focus PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(vt_vowel_focus PRIVATE /utf-8)
     endif()
 
     # 원본 vs 렌더 스펙트럼 차이 CLI (테스트 아님)

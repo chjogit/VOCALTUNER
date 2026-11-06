@@ -3,7 +3,7 @@
 // --level-match: 같은 조건을 음량 보정(levelMatch) 켠 변형("levelmatch")으로도 렌더/측정. listenRawDir이 있으면 청취 조건의 원시 f32le를 쓴다
 // A는 17.0-23.5 s, B는 24.0-30.5 s 구간을 쓴다. 이동 x 포먼트 양 x 엔진 x 구간을 렌더하고 출력 오디오만으로 측정한다.
 #include "../Source/Render/Psola.h"
-#include "VoiceMetrics.h"
+#include "HfSpike.h"
 #include "WavIO.h"
 #include <chrono>
 #include <filesystem>
@@ -16,7 +16,6 @@ using namespace voicemetrics;
 
 namespace
 {
-constexpr double pi = 3.14159265358979323846;
 
 struct Excerpt
 {
@@ -54,29 +53,6 @@ double energy(const std::vector<float>& a, const std::vector<float>* b, size_t f
     return e;
 }
 
-// 2048 창 1024 간격 프레임마다 (4-8 kHz 파워, 전체 파워)
-std::vector<std::pair<double, double>> framePowers(const std::vector<float>& y, int sr)
-{
-    std::vector<double> in(2048), out(2050);
-    auto plan = fft_plan_dft_r2c_1d(2048, in.data(), reinterpret_cast<fft_complex*>(out.data()), FFT_ESTIMATE);
-    std::vector<std::pair<double, double>> frames;
-    for (size_t s = 0; s + 2048 < y.size(); s += 1024)
-    {
-        for (size_t i = 0; i < 2048; ++i) in[i] = y[s + i] * (0.5 - 0.5 * std::cos(2.0 * pi * static_cast<double>(i) / 2048.0));
-        fft_execute(plan);
-        double high = 0.0, total = 0.0;
-        for (size_t k = 0; k <= 1024; ++k)
-        {
-            const auto p = out[2 * k] * out[2 * k] + out[2 * k + 1] * out[2 * k + 1];
-            total += p;
-            if (k >= static_cast<size_t>(4000 * 2048 / sr) && k <= static_cast<size_t>(8000 * 2048 / sr)) high += p;
-        }
-        frames.emplace_back(high, total);
-    }
-    fft_destroy_plan(plan);
-    return frames;
-}
-
 // 4-8 kHz / 전체 파워 (dB), 전 구간
 double highShareDb(const std::vector<float>& y, int sr)
 {
@@ -85,16 +61,7 @@ double highShareDb(const std::vector<float>& y, int sr)
     return 10.0 * std::log10((high + 1e-12) / (total + 1e-12));
 }
 
-// 새 고역 스파이크: 원본이 유성인 프레임마다 (출력 4-8 kHz 비중 - 원본 비중)의 95 백분위수 (dB). 이득만 바뀐 것은 비중에 영향이 없다
-double hfSpikeDb(const Excerpt& e, const std::vector<float>& y)
-{
-    const auto a = framePowers(e.x, e.sr), b = framePowers(y, e.sr);
-    std::vector<double> d;
-    for (size_t f = 0; f < a.size() && f < b.size(); ++f)
-        if (a[f].second > 1e-6 && e.midi[std::min(e.midi.size() - 1, (f * 1024 + 1024) / static_cast<size_t>(framePeriod * e.sr))] > 0.0)
-            d.push_back(10.0 * std::log10((b[f].first + 1e-12) / (b[f].second + 1e-12) * (a[f].second + 1e-12) / (a[f].first + 1e-12)));
-    return percentile95(d);
-}
+double hfSpikeDb(const Excerpt& e, const std::vector<float>& y) { return voicemetrics::hfSpikeDb(e.x, y, e.midi, e.sr); }
 
 // 강한 시작: 무성 80 ms(16프레임) 뒤에 유성이 시작하고 이후 50 ms RMS가 -40 dBFS 이상인 프레임
 std::vector<size_t> strongOnsets(const Excerpt& e)

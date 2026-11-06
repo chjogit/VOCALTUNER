@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include "ConsonantShield.h"
+#include "VowelWeight.h"
 #include "PsolaGrain.h"
 
 // 합성기가 구간을 앞뒤 무성 틈까지 넓혀 계산하므로, 이동량도 같은 만큼 구해 둔다.
@@ -43,6 +44,17 @@ std::vector<double> psolaFormantCurve(const VocalFeatures& f, const EditGrid& gr
     return amount;
 }
 
+// 원본 프레임 기준 이동량에 자음 보호(와 vowelFocus)를 적용
+std::vector<double> shieldedBySource(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const std::vector<double>& bySource,
+                                     size_t lo, size_t hi)
+{
+    const auto period = f.framePeriodMs / 1000.0;
+    auto shielded = shieldedShift(src.channels[0].data(), src.channels[0].size(), src.sampleRate, period, bySource, lo, hi);
+    if (grid.vowelFocus)
+        applyVowelFocus(shielded, src.channels[0].data(), src.channels[0].size(), src.sampleRate, period, f.midiF0.data(), f.size(), lo, hi);
+    return shielded;
+}
+
 // 박자가 바뀐 구간의 이동량 (출력 프레임 기준). 원본 음정은 가져오는 원본 프레임의 것. 자음 보호는 원본 시간 쪽에서 판단한다
 std::vector<double> warpShiftCurve(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span, double tolerance)
 {
@@ -61,8 +73,7 @@ std::vector<double> warpShiftCurve(const AudioPlanes& src, const VocalFeatures& 
         lo = std::min(lo, j);
         hi = std::max(hi, j + 1);
     }
-    const auto period = f.framePeriodMs / 1000.0;
-    const auto shielded = shieldedShift(src.channels[0].data(), src.channels[0].size(), src.sampleRate, period, bySource, lo, hi);
+    const auto shielded = shieldedBySource(src, f, grid, bySource, lo, hi);
     for (auto i = span.begin; i < span.end; ++i)
     {
         const auto j = static_cast<size_t>(grid.sourceFrame[i]);
@@ -71,4 +82,3 @@ std::vector<double> warpShiftCurve(const AudioPlanes& src, const VocalFeatures& 
     }
     return out;
 }
-

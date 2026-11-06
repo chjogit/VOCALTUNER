@@ -16,6 +16,7 @@ struct EditGrid
     bool formantEdited = false;         // 어느 프레임이든 1이 아님
     int lastSourceFrame = 0;
     bool levelMatch = false;            // 합성 구간 음량을 원본에 맞춘다 (RenderOptions에서 옴, PsolaLevel.h)
+    bool vowelFocus = false;            // 모음에서만 음정을 옮긴다 (RenderOptions에서 옴, VowelWeight.h)
     bool timingChanged = false;         // 문서 어딘가에 박자 편집이 있음 (렌더 방식은 구간이 아니라 문서 전체로 정한다)
     std::shared_ptr<const EditTimeMap> timeMap;
     size_t size() const noexcept { return targetMidi.size(); }
