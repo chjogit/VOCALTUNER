@@ -221,6 +221,20 @@ TimeMap bandAlignMap(const BandFrames& reference, double referenceOffset, const 
         const auto path = alignRun(tgt, ref, begin, end, steps, hop, o);
         std::vector<double> shift(path.size());
         for (size_t i = 0; i < path.size(); ++i) shift[i] = static_cast<double>(path[i] - static_cast<long>(begin + i)) * hop;
+        // 짧은 튐은 중앙값으로 지운다 (튄 값이 늘임 한도를 타고 넓게 퍼지지 않게)
+        {
+            const auto radius = static_cast<long>(std::lround(o.medianSec / hop));
+            std::vector<double> med(shift.size()), window;
+            for (size_t i = 0; i < shift.size(); ++i)
+            {
+                window.clear();
+                for (auto m = std::max<long>(0, static_cast<long>(i) - radius); m <= std::min<long>(static_cast<long>(shift.size()) - 1, static_cast<long>(i) + radius); ++m)
+                    window.push_back(shift[static_cast<size_t>(m)]);
+                std::nth_element(window.begin(), window.begin() + static_cast<long>(window.size() / 2), window.end());
+                med[i] = window[window.size() / 2];
+            }
+            shift.swap(med);
+        }
         // 평활 -> 작은 차이는 0 (Max Difference) -> 이동량이 10 ms마다 바뀌는 폭을 maxStretch*10 ms로 제한
         // (한 블록 안에서 늘이고 줄이는 비율의 한도. 따로 두면 DTW의 잔걸음이 그대로 늘임·줄임이 되어 소리가 뒤틀린다)
         std::vector<double> smoothed(shift.size());

@@ -8,6 +8,7 @@
 #include <string>
 #include "../Source/Alignment/BandAlign.h"
 #include "../Source/Alignment/ReferenceFit.h"
+#include "../Source/Render/EditGrid.h"
 #include "../Source/Render/EditRenderer.h"
 #include "WavIO.h"
 
@@ -79,6 +80,28 @@ int main(int argc, char** argv)
     }
     std::fprintf(moves, "stretch: %zu of %zu blocks change length by more than 15%%, worst %.0f%%\n", over, counted, 100.0 * worst);
     std::printf("stretch: %zu of %zu blocks change length by more than 15%%, worst %.0f%%\n", over, counted, 100.0 * worst);
+    // 박자만 바꿨는데 합성기가 음정 변화로 받는 양: 표시 프레임의 목표 음정 - 그 프레임이 가져오는 원본 프레임의 음정
+    {
+        const auto grid = buildGrid(take.size(), tr, *features, fitted);
+        size_t moved = 0, wrong = 0;
+        double sum = 0.0, worstCents = 0.0;
+        for (size_t i = 0; i < grid.size(); ++i)
+        {
+            const auto j = static_cast<size_t>(grid.sourceFrame[i]);
+            if (static_cast<size_t>(grid.sourceFrame[i]) == std::min(i, features->size() - 1)) continue;
+            if (grid.targetMidi[i] <= 0.0 || features->midiF0[j] <= 0.0) continue;
+            const auto cents = 100.0 * std::abs(grid.targetMidi[i] - features->midiF0[j]);
+            ++moved;
+            wrong += cents > 5.0 ? 1 : 0;
+            if (cents > 5.0 && std::getenv("BR_LIST"))
+                std::printf("  bad frame %.3f s (source %.3f) %+.0f cents\n", static_cast<double>(i) * 0.005 + start,
+                            static_cast<double>(j) * 0.005 + start, 100.0 * (grid.targetMidi[i] - features->midiF0[j]));
+            sum += cents;
+            worstCents = std::max(worstCents, cents);
+        }
+        std::printf("timing-only pitch error in grid: %zu of %zu moved voiced frames > 5 cents, mean %.1f, worst %.0f cents\n", wrong, moved,
+                    moved ? sum / static_cast<double>(moved) : 0.0, worstCents);
+    }
     std::fclose(moves);
 
     AudioPlanes source;
