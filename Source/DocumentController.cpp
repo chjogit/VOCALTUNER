@@ -68,7 +68,13 @@ std::vector<juce::ARAAudioSource*> sourcesToStore(ARA::PlugIn::DocumentControlle
                                                   const juce::ARAStoreObjectsFilter* filter)
 {
     if (filter != nullptr)
-        return filter->getAudioSourcesToStore<juce::ARAAudioSource>();
+    {
+        // 필터는 const 포인터를 준다. 객체 자체는 문서 소유(비 const)라 const_cast가 안전하다.
+        std::vector<juce::ARAAudioSource*> sources;
+        for (const auto* source : filter->getAudioSourcesToStore<juce::ARAAudioSource>())
+            sources.push_back(const_cast<juce::ARAAudioSource*>(source));
+        return sources;
+    }
     return documentSources(controller);
 }
 
@@ -78,7 +84,7 @@ juce::ARAAudioSource* findSource(ARA::PlugIn::DocumentController* controller, co
     if (filter != nullptr)
         return filter->getAudioSourceToRestoreStateWithID<juce::ARAAudioSource>(id.c_str());
     for (auto* source : documentSources(controller))
-        if (source->getPersistentID() != nullptr && id == source->getPersistentID())
+        if (! source->getPersistentID().empty() && id == source->getPersistentID())
             return source;
     return nullptr;
 }
@@ -126,7 +132,7 @@ bool VocalTunerDocumentController::doStoreObjectsToStream(juce::ARAOutputStream&
 {
     std::vector<ArchivedSource> archive;
     for (auto* source : sourcesToStore(getDocumentController(), filter))
-        if (source->getPersistentID() != nullptr)
+        if (! source->getPersistentID().empty())
             if (auto state = analysis.getSavedState(source))
                 archive.push_back({ source->getPersistentID(), std::move(*state) });
 
