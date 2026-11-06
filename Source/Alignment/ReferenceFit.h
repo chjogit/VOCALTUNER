@@ -31,6 +31,9 @@ struct TrackRoles
     double smoothAmount = 0.5;      // 음정 이음 정도 (pitch 역할이 켜진 트랙의 transitionAfter)
     double maxShiftSemitones = defaultFitShiftSemitones;   // 이동 한도: 이보다 크게 옮겨야 하는 음은 그대로 둔다
     PitchRelation relation = PitchRelation::Unison;
+    // 박자 맞추기에서 자음 블록과 블록 사이 짧은 틈(0.25초 이하)의 길이를 그대로 두고, 늘임·줄임은 유성 블록이 맡는다.
+    // 틈에 든 자음·음절 시작을 늘이면 PSOLA가 어택을 번지게 한다. 기본 꺼짐 = 기존 결과 그대로 (BandAlign과 함께 켠다)
+    bool rigidGaps = false;
 };
 
 // 타깃 블록 목록을 레퍼런스에 맞춘 결과 (모든 블록, 인덱스 순서).

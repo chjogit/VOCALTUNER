@@ -85,6 +85,39 @@ void repairOrder(std::vector<VocalBlock>& blocks)
             b.endOffsetSec = b.displayStartSec() + minBlockSeconds - b.endSec;
     }
 }
+// 자음 블록은 길이를 그대로, 짧은 틈은 원래 길이로: 앞 유성 블록의 끝을 옮겨 맞춘다 (앞이 자음이면 뒤 블록의 시작을 옮긴다)
+void keepGapsRigid(std::vector<VocalBlock>& fitted, const std::vector<VocalBlock>& baseline)
+{
+    constexpr double shortGapSec = 0.25;
+    const auto setEnd = [](VocalBlock& b, double end) { b.endOffsetSec = end - b.endSec; };
+    const auto setStart = [](VocalBlock& b, double start) { b.startOffsetSec = start - b.startSec; };
+    for (size_t i = 0; i < fitted.size(); ++i)
+        if (fitted[i].isConsonant)
+            setEnd(fitted[i], fitted[i].displayStartSec() + (baseline[i].displayEndSec() - baseline[i].displayStartSec()));
+    for (size_t i = 0; i + 1 < fitted.size(); ++i)
+    {
+        const auto gap = baseline[i + 1].displayStartSec() - baseline[i].displayEndSec();
+        if (gap < 0.0 || gap > shortGapSec)
+            continue;
+        auto& a = fitted[i];
+        auto& b = fitted[i + 1];
+        // 맡는 유성 블록은 원래 길이의 0.8~1.25배 안에서만 (그 밖이면 틈이 조금 늘거나 준다)
+        constexpr double shortest = 0.8, longest = 1.25;
+        if (! a.isConsonant)
+        {
+            const auto length = baseline[i].displayEndSec() - baseline[i].displayStartSec();
+            const auto lo = a.displayStartSec() + std::max(minBlockSeconds, shortest * length), hi = a.displayStartSec() + longest * length;
+            setEnd(a, std::clamp(b.displayStartSec() - gap, lo, std::max(lo, hi)));
+        }
+        else if (! b.isConsonant)
+        {
+            const auto length = baseline[i + 1].displayEndSec() - baseline[i + 1].displayStartSec();
+            const auto lo = b.displayEndSec() - longest * length, hi = b.displayEndSec() - std::max(minBlockSeconds, shortest * length);
+            setStart(b, std::clamp(a.displayEndSec() + gap, std::min(lo, hi), hi));
+        }
+    }
+}
+
 // 레퍼런스에서 이 블롭에 해당하는 구간 (원래 위치를 대응시킨 시각)
 std::pair<double, double> referenceSpan(const VocalBlock& b, double targetOffset, const TimeMap& map)
 {
@@ -196,6 +229,8 @@ std::vector<BlockUpdate> fitToReference(const std::vector<VocalBlock>& baseline,
     {
         for (auto& block : fitted)
             block = withTimingFitted(block, targetOffset, map, roles.timingAmount);
+        if (roles.rigidGaps)
+            keepGapsRigid(fitted, baseline);
         repairOrder(fitted);
     }
 

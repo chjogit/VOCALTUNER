@@ -300,8 +300,10 @@ AlignmentController::Outcome AlignmentController::apply(const juce::ARAPlaybackR
     const auto& melody = cache[target].melody;
     const auto* melodyToUse = p.referenceIsMix ? (melody != nullptr ? melody.get() : &noMelody) : nullptr;
     const auto referenceCurve = p.referenceIsMix ? nullptr : analysis.getFeatures(sourceOf(p.reference));
+    auto roles = settings(target).roles;
+    roles.rigidGaps = bandTiming && ! p.referenceIsMix;   // 대역 DTW 박자일 때만 (기존 박자 맞추기 결과는 그대로)
     const auto updates = fitToReference(*baseline, offsetOf(target), aligned->targetToReference, *referenceBlocks,
-                                        offsetOf(p.reference), settings(target).roles, melodyToUse, referenceCurve.get());
+                                        offsetOf(p.reference), roles, melodyToUse, referenceCurve.get());
     if (beginGesture)
     {
         if (onBeforeApply)

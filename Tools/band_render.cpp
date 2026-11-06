@@ -69,6 +69,7 @@ int main(int argc, char** argv)
     }
     TrackRoles roles;
     roles.timing = true;
+    roles.rigidGaps = std::getenv("BR_ELASTIC") == nullptr;
     std::vector<VocalBlock> fitted = blocks;
     for (const auto& u : fitToReference(blocks, 0.0, map, {}, 0.0, roles)) fitted[u.index] = u.block;
 
