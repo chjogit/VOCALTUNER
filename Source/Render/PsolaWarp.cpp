@@ -103,7 +103,8 @@ struct Warper
         const auto k = static_cast<size_t>(nearestMark(marks, sourceSample(in, t)));
         const auto period = periodOf(k);
         const auto shift = shiftAtOutput(in, t);
-        addGrain(source, synth, marks[k], std::lround(t), period, formantRatio(formantAtOutput(in, t), shift));
+        const auto ratio = formantRatio(formantAtOutput(in, t), shift);
+        addGrain(source, synth, marks[k], std::lround(t), grainHalf(period, shift, ratio), ratio);
         const auto next = t + static_cast<double>(period) / std::pow(2.0, shift / 12.0);
         t = std::max(lockedNext(next, shift, slopeAt(t)), t + 0.5 * static_cast<double>(period));
     }

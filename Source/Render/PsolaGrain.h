@@ -21,6 +21,9 @@ struct Synth { std::vector<double> out, weight; size_t offset = 0; };
 void addGrain(const PsolaInput&, Synth&, long mark, long centre, long half, double ratio = 1.0);
 // 포먼트를 원본 자리에 두는 정도(amount)와 이동(반음)에서 조각 읽기 배율. amount >= 1이면 정확히 1
 double formantRatio(double amount, double shiftSemitones) noexcept;
+// 조각 반폭. 포먼트를 옮기는 하향 이동(ratio != 1, shift < 0)에서는 조각이 간격(period / 2^(shift/12))의 두 배 이상이어야
+// 이웃 조각이 겹쳐 창 가중치가 0으로 떨어지지 않는다. 그 외는 period 그대로 (기본 경로 유지)
+long grainHalf(long period, double shiftSemitones, double ratio) noexcept;
 // 프레임 f의 포먼트 양 (formantAmount == nullptr이면 1)
 double formantAmountAt(const PsolaInput&, size_t frame) noexcept;
 long nearestMark(const std::vector<long>& marks, double t) noexcept;

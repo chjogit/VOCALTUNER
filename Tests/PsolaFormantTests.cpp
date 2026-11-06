@@ -1,7 +1,9 @@
 #include "VowelSynth.h"
 #include "../Source/Render/EditRenderer.h"
 #include "../Source/Render/Psola.h"
+#include "../Source/Render/PsolaGrain.h"
 #include "../Source/Render/PsolaWarp.h"
+#include <complex>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -11,7 +13,7 @@ namespace
 {
 int failures = 0;
 constexpr int sr = 44100;
-constexpr double framePeriod = 0.005, f0 = 120.0, ratio7 = 1.4983070768766815;
+constexpr double framePeriod = 0.005, f0 = 120.0, pi = 3.14159265358979323846, ratio7 = 1.4983070768766815;
 
 void check(bool condition, const char* message)
 {
@@ -121,7 +123,11 @@ struct Render
         b.formantAmount = amount;
         blocks = { b };
     }
-    std::vector<float> render() const { return renderEdited(audio, features, blocks)->channels[0]; }
+    std::vector<float> render() const
+    {
+        const auto out = renderEdited(audio, features, blocks);
+        return out && ! out->channels.empty() ? out->channels[0] : std::vector<float>{};
+    }
 };
 
 void testRenderer()
@@ -133,10 +139,64 @@ void testRenderer()
     report("renderer amount=0 +7st", src, b);
     check(near(src, a, 1.0, 0.10), "renderer: block formantAmount 1 keeps formants");
     check(near(src, b, ratio7, 0.10), "renderer: block formantAmount 0 moves formants");
-    auto plainBlocks = keep.blocks;
-    plainBlocks[0].formantAmount = 1.0;
-    check(renderEdited(keep.audio, keep.features, plainBlocks)->channels == std::vector<std::vector<float>>{ keep.render() },
-          "renderer: default amount is deterministic");
+    check(! keep.render().empty() && keep.render() == keep.render(), "renderer: default amount renders audio deterministically");
+    check(keep.render() != move.render(), "renderer: block formantAmount changes the audio");
+}
+
+// 4-8 kHz 파워 / 전체 파워 (dB), 한 창
+double highShareDb(const std::vector<float>& y, size_t begin, size_t n)
+{
+    double high = 0.0, total = 1e-30;
+    for (size_t k = 1; k < n / 2; ++k)
+    {
+        std::complex<double> c = 0.0;
+        for (size_t i = 0; i < n; ++i)
+            c += (0.5 - 0.5 * std::cos(2.0 * pi * static_cast<double>(i) / static_cast<double>(n))) * y[begin + i] * std::polar(1.0, -2.0 * pi * static_cast<double>(k * i) / static_cast<double>(n));
+        const auto power = std::norm(c);
+        total += power;
+        if (k * sr / n >= 4000 && k * sr / n <= 8000) high += power;
+    }
+    return 10.0 * std::log10(high / total + 1e-30);
+}
+
+// 한 옥타브 내림 + 포먼트가 같이 움직이는 경우(amount 0, 0.5): 조각이 서로 겹쳐야 하고 (이전에는 간격 == 창 길이라 가중치가
+// 0으로 떨어진 곳에 원본이 섞여 4-8 kHz가 폭증하고 F2가 틀어졌다), 포먼트는 2^(-12/12 * (1-amount))만큼
+void testOctaveDown()
+{
+    Fixture fx(-12.0);
+    const auto src = middle(fx.x);
+    const auto srcHigh = highShareDb(fx.x, static_cast<size_t>(0.7 * sr), 2048);
+    for (const auto amount : { 0.0, 0.5 })
+    {
+        const std::vector<double> a(fx.midi.size(), amount);
+        const auto y = psolaShift(fx.in(a.data()), 0, fx.x.size());
+        const auto out = middle(y);
+        const auto high = highShareDb(y, static_cast<size_t>(0.7 * sr), 2048);
+        std::printf("  octave down amount %.1f: HF/total %.1f dB (source %.1f), F1 %.0f F2 %.0f\n", amount, high, srcHigh, out.hz[0], out.hz[1]);
+        check(high < srcHigh + 15.0, "octave down: no broadband splice noise (4-8 kHz share stays near the source's)");
+        check(near(src, out, std::pow(2.0, -(1.0 - amount)), 0.10), "octave down: F1/F2 follow the shift by the requested amount within 10%");
+    }
+}
+
+// 가장자리: 원본 밖으로 나가는 포먼트 조각은 ratio 1 조각으로 대신하고, 그것도 안 되면 건너뛴다
+void testGrainEdges()
+{
+    const std::vector<float> x(1000, 0.5f);
+    PsolaInput in{ x.data(), x.size(), sr, framePeriod, nullptr, nullptr, 0, nullptr };
+    const auto weights = [&](long mark, double ratio)
+    {
+        psola::Synth s;
+        s.out.assign(600, 0.0);
+        s.weight.assign(600, 0.0);
+        psola::addGrain(in, s, mark, 300, 100, ratio);
+        return s.weight;
+    };
+    check(weights(120, 1.5) == weights(120, 1.0), "grain edge: resampled span outside the source falls back to the ratio 1 grain");
+    check(weights(20, 1.5) == weights(20, 1.0) && weights(20, 1.0) == std::vector<double>(600, 0.0), "grain edge: skipped when even ratio 1 does not fit");
+    check(weights(880, 1.5) == weights(880, 1.0), "grain edge: same fallback near the end");
+    double total = 0.0;
+    for (const auto w : weights(500, 0.5)) total += w;
+    check(total > 50.0, "grain edge: interior resampled grain has weight");
 }
 } // namespace
 
@@ -145,6 +205,8 @@ int main()
     testPsola();
     testWarp();
     testRenderer();
+    testOctaveDown();
+    testGrainEdges();
     std::printf("%d failure(s)\n", failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
