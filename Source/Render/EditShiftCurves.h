@@ -10,4 +10,6 @@ struct ChunkSpan { size_t coreBegin, coreEnd, begin, end; };   // 프레임 단�
 ChunkSpan spanToQuiet(const VocalFeatures&, const EditGrid&, const ChunkSpan&);
 std::vector<double> psolaShiftCurve(const VocalFeatures&, const EditGrid&, const ChunkSpan&, double tolerance);
 std::vector<double> psolaFormantCurve(const VocalFeatures&, const EditGrid&, const ChunkSpan&);
+// 자음 보호 (+ vowelFocus) 를 적용한 이동량. [first, last) 밖은 건드리지 않는다
+std::vector<double> protectedShift(const AudioPlanes&, const VocalFeatures&, const EditGrid&, const std::vector<double>& shift, size_t first, size_t last);
 std::vector<double> warpShiftCurve(const AudioPlanes&, const VocalFeatures&, const EditGrid&, const ChunkSpan&, double tolerance);

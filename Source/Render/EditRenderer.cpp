@@ -1,6 +1,4 @@
 #include "EditRenderer.h"
-#include "ConsonantShield.h"
-#include "VowelWeight.h"
 #include "Psola.h"
 #include "PsolaWarp.h"
 #include "PsolaGrain.h"
@@ -105,12 +103,9 @@ ChunkAudio psolaChunk(const AudioPlanes& src, const VocalFeatures& f, const Edit
     const auto range = sampleRangeOf(src, f, span);
     ChunkAudio out;
     out.startSample = range.start;
-    // 자음 보호: 첫 채널로 마찰음 같은 프레임을 찾아 그 프레임의 이동량을 0으로 (채널마다 다르면 소리가 갈라진다)
+    // 자음 보호 (+ vowelFocus): 마찰음 같은 프레임의 이동량을 0으로, 모음이 아닌 프레임은 줄인다
     const auto wide = spanToQuiet(f, grid, span);
-    auto shift = shieldedShift(src.channels[0].data(), src.channels[0].size(), src.sampleRate, period,
-                               psolaShiftCurve(f, grid, wide, tolerance), wide.begin, wide.end);
-    if (grid.vowelFocus)
-        applyVowelFocus(shift, src.channels[0].data(), src.channels[0].size(), src.sampleRate, period, f.midiF0.data(), f.size(), wide.begin, wide.end);
+    const auto shift = protectedShift(src, f, grid, psolaShiftCurve(f, grid, wide, tolerance), wide.begin, wide.end);
     psolaChannels(src, f, period, shift, psolaFormantCurve(f, grid, wide), grid.levelMatch, out, range.count);
     return out;
 }

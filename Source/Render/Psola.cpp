@@ -212,6 +212,19 @@ void synthesizeRuns(const PsolaInput& in, size_t beginSample, size_t endSample, 
             mask[static_cast<size_t>(i) - beginSample] = 1.0;
     }
 }
+
+// 합성을 원본에 섞는다. 반환값은 실제로 섞인 표본의 weight (그 밖은 0): 음량 보정도 같은 조건을 쓴다
+std::vector<double> mixSynthesis(std::vector<float>& y, const Synth& s, std::vector<double> w)
+{
+    for (size_t i = 0; i < y.size(); ++i)
+    {
+        const auto mixed = w[i] > 0.0 && s.weight[i] > 1e-3;
+        w[i] = mixed ? w[i] : 0.0;
+        if (mixed)
+            y[i] = static_cast<float>((1.0 - w[i]) * y[i] + w[i] * s.out[i] / s.weight[i]);
+    }
+    return w;
+}
 } // namespace
 
 std::vector<float> psolaShiftExact(const PsolaInput& in, size_t beginSample, size_t endSample)
@@ -226,14 +239,7 @@ std::vector<float> psolaShiftExact(const PsolaInput& in, size_t beginSample, siz
     s.weight.assign(y.size(), 0.0);
     std::vector<double> mask(y.size(), 0.0);
     synthesizeRuns(in, beginSample, endSample, s, mask);
-    auto w = mixWeight(in, mask, beginSample);
-    for (size_t i = 0; i < y.size(); ++i)
-    {
-        const auto mixed = w[i] > 0.0 && s.weight[i] > 1e-3;   // 합성이 실제로 섞인 표본만 (음량 보정도 같은 조건)
-        w[i] = mixed ? w[i] : 0.0;
-        if (mixed)
-            y[i] = static_cast<float>((1.0 - w[i]) * y[i] + w[i] * s.out[i] / s.weight[i]);
-    }
+    const auto w = mixSynthesis(y, s, mixWeight(in, mask, beginSample));
     if (in.levelMatch)
         applyLevelMatch(y, std::vector<float>(in.samples + beginSample, in.samples + endSample), w, in.sampleRate, beginSample);
     return y;

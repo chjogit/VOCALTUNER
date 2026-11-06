@@ -125,6 +125,14 @@ void applyLevelMatch(std::vector<float>& y, const std::vector<float>& ref, const
     }
 }
 
+std::vector<double> coveredMask(const std::vector<double>& mask, const std::vector<double>& synthWeight)
+{
+    std::vector<double> out(mask);
+    for (size_t i = 0; i < out.size() && i < synthWeight.size(); ++i)
+        out[i] = synthWeight[i] > synthCoverageMin ? out[i] : 0.0;
+    return out;
+}
+
 std::vector<double> maskWeight(const std::vector<double>& mask, int sampleRate)
 {
     const auto fade = std::max<size_t>(1, static_cast<size_t>(0.01 * sampleRate));

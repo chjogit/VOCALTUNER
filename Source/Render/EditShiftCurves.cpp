@@ -44,22 +44,24 @@ std::vector<double> psolaFormantCurve(const VocalFeatures& f, const EditGrid& gr
     return amount;
 }
 
-// 원본 프레임 기준 이동량에 자음 보호(와 vowelFocus)를 적용
-std::vector<double> shieldedBySource(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const std::vector<double>& bySource,
-                                     size_t lo, size_t hi)
+// 원본 프레임 기준 이동량 shift의 [first, last)에 자음 보호(와 vowelFocus면 모음 가중치)를 적용. 첫 채널로 판단한다 (채널마다 다르면 소리가 갈라진다)
+std::vector<double> protectedShift(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const std::vector<double>& shift,
+                                   size_t first, size_t last)
 {
     const auto period = f.framePeriodMs / 1000.0;
-    auto shielded = shieldedShift(src.channels[0].data(), src.channels[0].size(), src.sampleRate, period, bySource, lo, hi);
+    const auto* x = src.channels[0].data();
+    auto out = shieldedShift(x, src.channels[0].size(), src.sampleRate, period, shift, first, last);
     if (grid.vowelFocus)
-        applyVowelFocus(shielded, src.channels[0].data(), src.channels[0].size(), src.sampleRate, period, f.midiF0.data(), f.size(), lo, hi);
-    return shielded;
+        applyVowelFocus(out, x, src.channels[0].size(), src.sampleRate, period, f.midiF0.data(), f.size(), first, last);
+    return out;
 }
 
-// 박자가 바뀐 구간의 이동량 (출력 프레임 기준). 원본 음정은 가져오는 원본 프레임의 것. 자음 보호는 원본 시간 쪽에서 판단한다
-std::vector<double> warpShiftCurve(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span, double tolerance)
+namespace
 {
-    std::vector<double> out(grid.size(), 0.0);
-    std::vector<double> bySource(f.size(), 0.0);
+// 출력 프레임 이동량 out과 같은 값을 원본 프레임 쪽(bySource)에도 적는다. 원본 프레임 범위 [lo, hi)를 돌려준다
+std::pair<size_t, size_t> shiftsBySource(const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span, double tolerance,
+                                         std::vector<double>& out, std::vector<double>& bySource)
+{
     size_t lo = f.size(), hi = 0;
     for (auto i = span.begin; i < span.end; ++i)
     {
@@ -73,7 +75,16 @@ std::vector<double> warpShiftCurve(const AudioPlanes& src, const VocalFeatures& 
         lo = std::min(lo, j);
         hi = std::max(hi, j + 1);
     }
-    const auto shielded = shieldedBySource(src, f, grid, bySource, lo, hi);
+    return { lo, hi };
+}
+} // namespace
+
+// 박자가 바뀐 구간의 이동량 (출력 프레임 기준). 원본 음정은 가져오는 원본 프레임의 것. 자음 보호는 원본 시간 쪽에서 판단한다
+std::vector<double> warpShiftCurve(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span, double tolerance)
+{
+    std::vector<double> out(grid.size(), 0.0), bySource(f.size(), 0.0);
+    const auto [lo, hi] = shiftsBySource(f, grid, span, tolerance, out, bySource);
+    const auto shielded = protectedShift(src, f, grid, bySource, lo, hi);
     for (auto i = span.begin; i < span.end; ++i)
     {
         const auto j = static_cast<size_t>(grid.sourceFrame[i]);

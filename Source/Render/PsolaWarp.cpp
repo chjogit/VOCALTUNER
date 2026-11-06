@@ -131,8 +131,8 @@ std::vector<float> sourceOnOutputTimeline(const WarpInput& in, size_t a, size_t 
     return ref;
 }
 
-// 이동이 있는 유성 구간에서만 음량을 원본에 맞춘다. y[0]은 출력 표본 a
-void matchWarpedLevel(const WarpInput& in, size_t a, std::vector<float>& y)
+// 이동이 있는 유성 구간 중 합성이 덮은 곳에서만 음량을 원본에 맞춘다. y[0]은 출력 표본 a
+void matchWarpedLevel(const WarpInput& in, size_t a, std::vector<float>& y, const std::vector<double>& synthWeight)
 {
     std::vector<double> mask(y.size(), 0.0);
     for (size_t j = 0; j < y.size(); ++j)
@@ -140,7 +140,7 @@ void matchWarpedLevel(const WarpInput& in, size_t a, std::vector<float>& y)
         const auto t = static_cast<double>(a + j);
         mask[j] = voicedAtOutput(in, t) && std::abs(shiftAtOutput(in, t)) > 0.01 ? 1.0 : 0.0;
     }
-    applyLevelMatch(y, sourceOnOutputTimeline(in, a, y.size()), maskWeight(mask, in.sampleRate), in.sampleRate, a);
+    applyLevelMatch(y, sourceOnOutputTimeline(in, a, y.size()), maskWeight(coveredMask(mask, synthWeight), in.sampleRate), in.sampleRate, a);
 }
 } // namespace
 
@@ -189,6 +189,6 @@ std::vector<float> psolaWarp(const WarpInput& in, size_t outBegin, size_t outEnd
     for (size_t i = 0; i < y.size(); ++i)
         y[i] = w.synth.weight[i] > 1e-3 ? static_cast<float>(w.synth.out[i] / w.synth.weight[i]) : 0.0f;
     if (in.levelMatch)
-        matchWarpedLevel(in, a, y);
+        matchWarpedLevel(in, a, y, w.synth.weight);
     return std::vector<float>(y.begin() + static_cast<long>(outBegin - a), y.begin() + static_cast<long>(outEnd - a));
 }

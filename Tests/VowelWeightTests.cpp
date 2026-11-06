@@ -1,91 +1,20 @@
-#include "../Source/Render/VowelWeight.h"
-#include "../Source/Render/EditRenderer.h"
-#include "VowelSynth.h"
+#include "VowelTestScene.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <random>
 
+using namespace vwtest;
+
 namespace
 {
 int failures = 0;
-constexpr int sr = 48000;
-constexpr double period = 0.005, f0 = 200.0;
 
 void check(bool condition, const char* message)
 {
     std::printf("%s %s\n", condition ? "[PASS]" : "[FAIL]", message);
     failures += condition ? 0 : 1;
 }
-
-size_t samplesOf(double sec) { return static_cast<size_t>(sec * sr); }
-
-struct Scene
-{
-    std::vector<float> x;
-    std::vector<double> midi;
-    void append(const std::vector<float>& part, bool voiced = true)
-    {
-        x.insert(x.end(), part.begin(), part.end());
-        midi.resize(x.size() / samplesOf(period), voiced ? 69.0 + 12.0 * std::log2(f0 / 440.0) : 0.0);
-    }
-    std::vector<double> weights(size_t a = 0, size_t b = static_cast<size_t>(-1)) const
-    {
-        return vowelWeights(x.data(), x.size(), sr, period, midi.data(), midi.size(), a, b);
-    }
-};
-
-std::vector<float> vowel(double sec, double peak = 0.3) { return vowelsynth::synth(vowelsynth::vowelA(), f0, samplesOf(sec), sr, peak); }
-
-std::vector<float> whiteNoise(double sec, double peak)
-{
-    std::mt19937 rng(5);
-    std::uniform_real_distribution<float> d(-1.0f, 1.0f);
-    std::vector<float> x(samplesOf(sec));
-    for (auto& v : x) v = static_cast<float>(peak) * d(rng);
-    return x;
-}
-
-// Paul Kellet 근사 핑크 잡음
-std::vector<float> pinkNoise(double sec, double peak)
-{
-    auto w = whiteNoise(sec, 1.0);
-    double b0 = 0, b1 = 0, b2 = 0;
-    for (auto& v : w)
-    {
-        b0 = 0.99765 * b0 + v * 0.0990460; b1 = 0.96300 * b1 + v * 0.2965164; b2 = 0.57000 * b2 + v * 1.0526913;
-        v = static_cast<float>(peak * 0.25 * (b0 + b1 + b2 + v * 0.1848));
-    }
-    return w;
-}
-
-// 치찰음처럼 고역 위주 잡음 (부호 교대)
-std::vector<float> hiss(double sec, double peak)
-{
-    auto w = whiteNoise(sec, peak);
-    for (size_t i = 0; i < w.size(); i += 2) w[i] = -w[i];
-    return w;
-}
-
-// 비음처럼 낮고 조용한 유성: 저역 통과 펄스열, 약한 포먼트, 모음보다 RMS 25 dB 낮다
-std::vector<float> nasal(double sec)
-{
-    std::vector<double> x(samplesOf(sec), 0.0);
-    for (double t = 0.0; t < static_cast<double>(x.size()); t += sr / f0) x[static_cast<size_t>(std::lround(t))] = 1.0;
-    for (int i = 0; i < 4; ++i) vowelsynth::onePole(x, 0.97);
-    vowelsynth::resonate(x, 250.0, 200.0, sr);
-    const auto ref = vowel(0.5);   // RMS를 모음에 맞춘 뒤 25 dB 낮춘다
-    double eRef = 0.0, eNasal = 1e-24;
-    for (const auto v : ref) eRef += static_cast<double>(v) * v;
-    for (const auto v : x) eNasal += v * v;
-    const auto gain = std::sqrt(eRef / static_cast<double>(ref.size()) / (eNasal / static_cast<double>(x.size()))) * std::pow(10.0, -25.0 / 20.0);
-    std::vector<float> y(x.size());
-    for (size_t i = 0; i < x.size(); ++i) y[i] = static_cast<float>(gain * x[i]);
-    return y;
-}
-
-double lowestIn(const std::vector<double>& w, double a, double b) { return *std::min_element(w.begin() + static_cast<long>(a / period), w.begin() + static_cast<long>(b / period)); }
-double highestIn(const std::vector<double>& w, double a, double b) { return *std::max_element(w.begin() + static_cast<long>(a / period), w.begin() + static_cast<long>(b / period)); }
 
 void testVowel()
 {
@@ -139,6 +68,43 @@ void testSequence()
     check(highestIn(w, 0.75, 0.95) <= 0.1 && lowestIn(w, 0.2, 0.45) >= 0.95, "noise low, vowels high in the sequence");
 }
 
+// 무성(sourceMidi == 0) 구간이 낀 열: 유성 구간 안에서는 프레임당 변화 <= 0.15, 무성은 w = 0
+void testUnvoicedGap()
+{
+    Scene s;
+    s.append(vowel(0.5));
+    s.append(whiteNoise(0.2, 0.1), false);
+    s.append(vowel(0.5));
+    const auto w = s.weights();
+    double step = 0.0;
+    bool silent = true;
+    for (size_t i = 1; i < w.size(); ++i)
+    {
+        silent = silent && (s.midi[i] > 0.0 || w[i] == 0.0);
+        if (s.midi[i] > 0.0 && s.midi[i - 1] > 0.0) step = std::max(step, std::abs(w[i] - w[i - 1]));
+    }
+    std::printf("  with unvoiced gap: max step inside voiced runs %.3f\n", step);
+    check(step <= 0.15 && silent, "voiced runs around an unvoiced gap: no step above 0.15 per frame, unvoiced frames are 0");
+    check(lowestIn(w, 0.15, 0.4) == 1.0 && lowestIn(w, 0.95, 1.2) == 1.0, "vowels next to the unvoiced gap keep w == 1 in their cores");
+}
+
+// NaN 표본, null 입력: w는 항상 유한한 0..1, null이면 0
+void testNonFinite()
+{
+    Scene s;
+    s.append(vowel(1.0));
+    s.x[samplesOf(0.5)] = std::nanf("");
+    const auto w = s.weights();
+    bool ok = true;
+    for (const auto v : w) ok = ok && std::isfinite(v) && v >= 0.0 && v <= 1.0;
+    check(ok, "a NaN sample: every w stays finite within 0..1");
+    const auto none = vowelWeights(nullptr, 0, sr, period, nullptr, s.midi.size(), 0, 50);
+    check(none.size() == 50 && *std::max_element(none.begin(), none.end()) == 0.0, "null input: w == 0");
+    std::vector<double> shift(s.midi.size(), 2.0);
+    applyVowelFocus(shift, s.x.data(), s.x.size(), sr, period, nullptr, s.midi.size(), 0, 50);
+    check(shift[10] == 0.0 && shift[60] == 2.0, "applyVowelFocus with null midi zeroes the range only");
+}
+
 void testRange()
 {
     Scene s;
@@ -170,38 +136,6 @@ void testApply()
     check(shift[60] > 1.9 && shift[170] < 0.2, "applyVowelFocus scales vowel ~1 and noise ~0");
 }
 
-struct RenderFixture
-{
-    AudioPlanes audio;
-    VocalFeatures f;
-    VocalBlock b;
-    explicit RenderFixture(const Scene& s)
-    {
-        audio.sampleRate = sr;
-        audio.channels = { s.x };
-        f.timeSec.resize(s.midi.size());
-        for (size_t i = 0; i < f.timeSec.size(); ++i) f.timeSec[i] = static_cast<double>(i) * period;
-        f.midiF0 = s.midi;
-        f.rms.assign(s.midi.size(), 0.5);
-        b.beginFrame = 10; b.endFrame = s.midi.size() - 10; b.startSec = 0.05; b.endSec = 0.95;
-        b.baseMidi = static_cast<int>(std::lround(s.midi[11])); b.pitchOffset = s.midi[11] - b.baseMidi; b.tidyAmount = 0.0; b.pitchShift = 3.0;
-    }
-};
-
-// 같은 입력으로 vowelFocus 꺼짐/켜짐 렌더: 꺼짐은 기본과 비트까지 같고, 켜면 숨소리 구간의 이동이 줄어 출력이 달라진다
-void testRenderFlag()
-{
-    Scene s;
-    s.append(vowel(0.6));
-    s.append(whiteNoise(0.4, 0.1));
-    const RenderFixture fx(s);
-    RenderOptions off, on;
-    off.vowelFocus = false;
-    on.vowelFocus = true;
-    const auto d = renderEdited(fx.audio, fx.f, { fx.b }), o = renderEdited(fx.audio, fx.f, { fx.b }, off), v = renderEdited(fx.audio, fx.f, { fx.b }, on);
-    check(d && o && v && d->channels[0] == o->channels[0], "vowelFocus off: render bit-identical to the default");
-    check(v && v->channels[0] != o->channels[0], "vowelFocus on: render differs (shift reduced in the noise)");
-}
 } // namespace
 
 int main()
@@ -211,9 +145,10 @@ int main()
     testFricative();
     testNasal();
     testSequence();
+    testUnvoicedGap();
+    testNonFinite();
     testRange();
     testApply();
-    testRenderFlag();
     std::printf(failures ? "FAILED: %d\n" : "all passed\n", failures);
     return failures ? 1 : 0;
 }

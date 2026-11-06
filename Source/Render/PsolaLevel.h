@@ -16,12 +16,16 @@ constexpr double levelMaxDb = 6.0, levelSlewDb = 0.5, levelGateRms = 1e-4;
 // origin = y[0]의 절대 표본 번호. 격자가 절대 표본에 묶이므로 어느 구간을 렌더해도 같은 표본은 같은 gain을 받는다.
 // 첫 창 중심의 y 안 위치는 levelGridOffset(origin, sampleRate)
 std::vector<double> levelGainsDb(const std::vector<float>& y, const std::vector<float>& ref, const std::vector<double>& weight, int sampleRate,
-                                 size_t origin = 0);
+                                 size_t origin);
 size_t levelGridOffset(size_t origin, int sampleRate);
 
 // y에 levelGainsDb를 보간해 곱한다. weight[i] == 0이면 y[i]는 그대로.
 // 표본마다 |y|*gain이 그 표본 둘레 20 ms 안 원본 최대 |ref|를 넘지 않게 gain을 제한한다 (클립 방지, 원래 |y|가 넘는 표본은 gain 1)
-void applyLevelMatch(std::vector<float>& y, const std::vector<float>& ref, const std::vector<double>& weight, int sampleRate, size_t origin = 0);
+void applyLevelMatch(std::vector<float>& y, const std::vector<float>& ref, const std::vector<double>& weight, int sampleRate, size_t origin);
+
+// 합성이 덮은 곳(synthWeight > synthCoverageMin)만 남긴 마스크: 덮이지 않은 틈(출력 0)이 이웃 창의 gain을 끌어올리지 않게
+constexpr double synthCoverageMin = 1e-3;
+std::vector<double> coveredMask(const std::vector<double>& mask, const std::vector<double>& synthWeight);
 
 // 마스크(0/1)를 가장자리 10 ms로 눌러 만든 weight (마스크가 0인 곳은 항상 0)
 std::vector<double> maskWeight(const std::vector<double>& mask, int sampleRate);

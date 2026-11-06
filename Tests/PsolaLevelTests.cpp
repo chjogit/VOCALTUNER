@@ -102,7 +102,7 @@ void testSmooth()
     const auto off = psolaShift(fx.in(false), 0, fx.x.size());
     std::vector<double> mask(fx.x.size(), 0.0);
     for (auto i = static_cast<size_t>(0.5 * sr); i < static_cast<size_t>(1.2 * sr); ++i) mask[i] = 1.0;
-    const auto db = psola::levelGainsDb(off, fx.x, psola::maskWeight(mask, sr), sr);
+    const auto db = psola::levelGainsDb(off, fx.x, psola::maskWeight(mask, sr), sr, 0);
     double step = 0.0, top = 0.0;
     for (size_t k = 1; k < db.size(); ++k) step = std::max(step, std::abs(db[k] - db[k - 1]));
     for (const auto g : db) top = std::max(top, std::abs(g));
@@ -125,7 +125,19 @@ void testPeakGuard()
         worstOff = std::max(worstOff, static_cast<double>(std::abs(off[i]) - local));
         peakOut = std::max(peakOut, static_cast<double>(std::abs(on[i])));
     }
-    std::printf("  peak guard -2 st: max excess over local source peak: on %+.4f, off %+.4f, out peak %.3f\n", worstOn, worstOff, peakOut);
+    std::vector<double> mask(fx.x.size(), 0.0);
+    for (auto i = static_cast<size_t>(0.6 * sr); i < static_cast<size_t>(1.1 * sr); ++i) mask[i] = 1.0;
+    const auto db = psola::levelGainsDb(off, fx.x, psola::maskWeight(mask, sr), sr, 0);
+    const auto gMax = std::pow(10.0, *std::max_element(db.begin(), db.end()) / 20.0);   // 보정이 최대로 걸었을 gain
+    double unguarded = -1.0;
+    for (auto i = static_cast<size_t>(0.6 * sr); i < static_cast<size_t>(1.1 * sr); i += 7)
+    {
+        float local = 0.0f;
+        for (auto k = i > half ? i - half : 0; k < std::min(on.size(), i + half); ++k) local = std::max(local, std::abs(fx.x[k]));
+        unguarded = std::max(unguarded, std::abs(off[i]) * gMax - local);
+    }
+    check(unguarded > 0.01, "the peak fixture needs the guard: unguarded gain would exceed the local source peak by > 0.01");
+    std::printf("  peak guard -2 st: unguarded excess bound %+.4f; max excess over local source peak: on %+.4f, off %+.4f, out peak %.3f\n", unguarded, worstOn, worstOff, peakOut);
     check(worstOn <= 0.01, "level match: |out| <= local source peak + 0.01 on a near-full-scale fixture");
 }
 
@@ -165,6 +177,25 @@ void testRenderEdited()
     check(v && v->channels[0] != o->channels[0], "renderEdited: levelMatch on differs");
 }
 
+// 합성이 덮지 못한 틈(출력 0)이 이웃 창의 gain을 끌어올리지 않는다 (warp 마스크는 합성 coverage로 거른다)
+void testCoverageGap()
+{
+    Fixture fx(7.0);
+    std::vector<float> y(fx.x.size());
+    for (size_t i = 0; i < y.size(); ++i) y[i] = 0.9f * fx.x[i];   // 합성이 -0.9 dB 작게 나온 것으로
+    std::vector<double> mask(y.size(), 0.0), cover(y.size(), 1.0);
+    for (auto i = static_cast<size_t>(0.5 * sr); i < static_cast<size_t>(1.2 * sr); ++i) mask[i] = 1.0;
+    for (auto i = static_cast<size_t>(0.80 * sr); i < static_cast<size_t>(0.85 * sr); ++i) { cover[i] = 0.0; y[i] = 0.0f; }
+    auto plain = y, gated = y;
+    psola::applyLevelMatch(plain, fx.x, psola::maskWeight(mask, sr), sr, 0);
+    psola::applyLevelMatch(gated, fx.x, psola::maskWeight(psola::coveredMask(mask, cover), sr), sr, 0);
+    const auto gainDb = [&](const std::vector<float>& out) { return rmsDb(out, y, 0.85, 0.87); };
+    std::printf("  coverage gap: gain next to the gap plain %+.2f dB, gated %+.2f dB (ideal at most +0.92)\n", gainDb(plain), gainDb(gated));
+    check(gainDb(plain) > gainDb(gated) + 0.5, "the gap fixture boosts the neighbours when the gap counts (so the test can fail)");
+    check(gainDb(gated) < 0.92 + 0.3, "level match gated on synthesis coverage: the gap does not inflate the neighbouring gain");
+    check(std::all_of(gated.begin() + static_cast<long>(0.80 * sr), gated.begin() + static_cast<long>(0.85 * sr), [](float v) { return v == 0.0f; }), "level match leaves the uncovered gap at zero");
+}
+
 void testWarp()
 {
     Fixture fx(7.0);
@@ -190,6 +221,7 @@ int main()
     testUnchanged();
     testSmooth();
     testWarp();
+    testCoverageGap();
     testPeakGuard();
     testSubRange();
     testRenderEdited();

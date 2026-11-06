@@ -274,6 +274,13 @@ if(VOCALTUNER_BUILD_TESTS)
     endif()
     add_test(NAME VowelWeightTests COMMAND VowelWeightTests)
 
+    add_executable(VowelRenderTests Tests/VowelRenderTests.cpp)
+    target_link_libraries(VowelRenderTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(VowelRenderTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME VowelRenderTests COMMAND VowelRenderTests)
+
     add_executable(SpectralDiffTests Tests/SpectralDiffTests.cpp)
     target_link_libraries(SpectralDiffTests PRIVATE vocaltuner_core)
     if(MSVC)
