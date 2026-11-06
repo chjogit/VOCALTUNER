@@ -14,7 +14,6 @@ namespace
 {
 constexpr double padSeconds = 0.25;
 
-
 std::vector<ChunkSpan> splitChunks(size_t frames, double period, double chunkSeconds)
 {
     const auto perChunk = std::max<size_t>(1, static_cast<size_t>(chunkSeconds / period));
@@ -30,6 +29,16 @@ std::vector<ChunkSpan> splitChunks(size_t frames, double period, double chunkSec
 }
 
 struct ChunkAudio { size_t startSample = 0; std::vector<std::vector<float>> channels; };
+
+// 구간의 시작 샘플과 길이
+struct SampleRange { size_t start = 0, count = 0; };
+
+SampleRange sampleRangeOf(const AudioPlanes& src, const VocalFeatures& f, const ChunkSpan& span)
+{
+    const auto period = f.framePeriodMs / 1000.0;
+    const auto at = [&](size_t frame) { return static_cast<size_t>(std::lround(static_cast<double>(frame) * period * src.sampleRate)); };
+    return { at(span.begin), static_cast<size_t>(std::lround(static_cast<double>(span.end - span.begin) * period * src.sampleRate)) };
+}
 
 // 다시 합성한 소리는 바뀐 프레임 둘레에서만 쓰고, 나머지는 원본 그대로 (편집하지 않은 음까지 합성 음색이 되지 않게)
 constexpr double renderedMarginSec = 0.03, renderedFadeSec = 0.02;
@@ -75,17 +84,10 @@ void keepSourceWhereUnchanged(ChunkAudio& out, const AudioPlanes& src, const std
         }
 }
 
-ChunkAudio psolaChunk(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span, double tolerance)
+// 채널마다 PSOLA로 [start, start + samples)를 합성
+void psolaChannels(const AudioPlanes& src, const VocalFeatures& f, double period, const std::vector<double>& shift,
+                   const std::vector<double>& formant, ChunkAudio& out, size_t samples)
 {
-    const auto period = f.framePeriodMs / 1000.0;
-    ChunkAudio out;
-    out.startSample = static_cast<size_t>(std::lround(static_cast<double>(span.begin) * period * src.sampleRate));
-    const auto samples = static_cast<size_t>(std::lround(static_cast<double>(span.end - span.begin) * period * src.sampleRate));
-    // 자음 보호: 첫 채널로 마찰음 같은 프레임을 찾아 그 프레임의 이동량을 0으로 (채널마다 다르면 소리가 갈라진다)
-    const auto wide = spanToQuiet(f, grid, span);
-    const auto shift = shieldedShift(src.channels[0].data(), src.channels[0].size(), src.sampleRate, period,
-                                psolaShiftCurve(f, grid, wide, tolerance), wide.begin, wide.end);
-    const auto formant = psolaFormantCurve(f, grid, wide);
     for (const auto& ch : src.channels)
     {
         const PsolaInput in { ch.data(), ch.size(), src.sampleRate, period, f.midiF0.data(), shift.data(), f.size(),
@@ -94,6 +96,19 @@ ChunkAudio psolaChunk(const AudioPlanes& src, const VocalFeatures& f, const Edit
         y.resize(samples, 0.0f);
         out.channels.push_back(std::move(y));
     }
+}
+
+ChunkAudio psolaChunk(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span, double tolerance)
+{
+    const auto period = f.framePeriodMs / 1000.0;
+    const auto range = sampleRangeOf(src, f, span);
+    ChunkAudio out;
+    out.startSample = range.start;
+    // 자음 보호: 첫 채널로 마찰음 같은 프레임을 찾아 그 프레임의 이동량을 0으로 (채널마다 다르면 소리가 갈라진다)
+    const auto wide = spanToQuiet(f, grid, span);
+    const auto shift = shieldedShift(src.channels[0].data(), src.channels[0].size(), src.sampleRate, period,
+                                     psolaShiftCurve(f, grid, wide, tolerance), wide.begin, wide.end);
+    psolaChannels(src, f, period, shift, psolaFormantCurve(f, grid, wide), out, range.count);
     return out;
 }
 
@@ -101,9 +116,10 @@ ChunkAudio psolaChunk(const AudioPlanes& src, const VocalFeatures& f, const Edit
 ChunkAudio warpChunk(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span, double tolerance)
 {
     const auto period = f.framePeriodMs / 1000.0;
+    const auto range = sampleRangeOf(src, f, span);
     ChunkAudio out;
-    out.startSample = static_cast<size_t>(std::lround(static_cast<double>(span.begin) * period * src.sampleRate));
-    const auto samples = static_cast<size_t>(std::lround(static_cast<double>(span.end - span.begin) * period * src.sampleRate));
+    out.startSample = range.start;
+    const auto samples = range.count;
     const auto shift = warpShiftCurve(src, f, grid, spanToQuiet(f, grid, span), tolerance);
     const auto* map = grid.timeMap.get();
     for (const auto& ch : src.channels)
@@ -120,9 +136,10 @@ ChunkAudio warpChunk(const AudioPlanes& src, const VocalFeatures& f, const EditG
 ChunkAudio renderChunk(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span, double tolerance)
 {
     const auto period = f.framePeriodMs / 1000.0;
+    const auto range = sampleRangeOf(src, f, span);
     ChunkAudio out;
-    out.startSample = static_cast<size_t>(std::lround(static_cast<double>(span.begin) * period * src.sampleRate));
-    const auto samples = static_cast<size_t>(std::lround(static_cast<double>(span.end - span.begin) * period * src.sampleRate));
+    out.startSample = range.start;
+    const auto samples = range.count;
     if (! rangeChanges(grid, span.begin, span.end, tolerance))
     {
         for (const auto& ch : src.channels)

@@ -42,6 +42,6 @@ void rememberAnalysis(const Spec& in, ShiftState& state);
 void shiftFrame(const Spec& in, ShiftState& state, double ratio, size_t hop, Spec& out);
 
 // 옮겨진 프레임에 곱할 이득. logEnv = 원본 프레임의 로그 진폭 포락선 (N/2+1빈).
-// gain[k] = exp(logEnv(k/formantRatio) - logEnv(k/ratio)), +-30 dB로 제한
+// gain[k] = exp(logEnv(k/formantRatio) - logEnv(k/ratio)), +-60 dB로 제한
 std::vector<double> formantGain(const std::vector<double>& logEnv, double ratio, double formantRatio);
 } // namespace pvoc

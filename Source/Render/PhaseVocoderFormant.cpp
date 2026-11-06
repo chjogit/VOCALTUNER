@@ -6,7 +6,7 @@ namespace pvoc
 {
 namespace
 {
-constexpr double maxLogGain = 60.0 / 8.685889638;   // 60 dB (자연로그 진폭)   // 30 dB (자연로그 진폭)   // 30 dB (자연로그 진폭)   // dB (자연로그 진폭)   // dB (자연로그 진폭)   // 30 dB (자연로그 진폭)
+constexpr double maxLogGain = 60.0 / 8.685889638;   // 60 dB (자연로그 진폭)
 
 // 로그 포락선을 빈 위치(실수)에서 선형 보간. 범위 밖은 끝값
 double sampleAt(const std::vector<double>& env, double pos) noexcept

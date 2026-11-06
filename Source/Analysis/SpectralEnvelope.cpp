@@ -19,9 +19,25 @@ public:
     {
         plan = fft_plan_dft_r2c_1d(static_cast<int>(n), in.data(), reinterpret_cast<fft_complex*>(out.data()), FFT_ESTIMATE);
     }
-    ~SymmetricFft() { fft_destroy_plan(plan); }
+    ~SymmetricFft() { if (ok()) fft_destroy_plan(plan); }
     SymmetricFft(const SymmetricFft&) = delete;
     SymmetricFft& operator=(const SymmetricFft&) = delete;
+
+    // 플랜을 만들지 못했으면 false
+    bool ok() const noexcept { return plan.w != nullptr && plan.ip != nullptr && plan.input != nullptr; }
+
+    // frame[0..len)에 Hann 창을 씌우고 0을 채워 변환한 로그 진폭 (n/2+1개). 플랜은 한 번만 만들어 재사용한다
+    std::vector<double> logSpectrum(const double* frame, size_t len)
+    {
+        std::fill(in.begin(), in.end(), 0.0);
+        for (size_t i = 0; i < len; ++i)
+            in[i] = frame[i] * (0.5 - 0.5 * std::cos(2.0 * pi * static_cast<double>(i) / static_cast<double>(std::max<size_t>(1, len - 1))));
+        fft_execute(plan);
+        std::vector<double> logAmp(n / 2 + 1);
+        for (size_t m = 0; m < logAmp.size(); ++m)
+            logAmp[m] = std::log(std::hypot(out[2 * m], out[2 * m + 1]) + floorAmp);
+        return logAmp;
+    }
 
     // half[0..n/2]를 짝대칭으로 펼쳐 변환한 실수부 (n/2+1개)
     std::vector<double> transform(const std::vector<double>& half)
@@ -41,7 +57,7 @@ public:
 private:
     size_t n;
     std::vector<double> in, out;
-    fft_plan plan;
+    fft_plan plan{};
 };
 
 // 켑스트럼 차수 order 이하만 남긴 평활
@@ -54,27 +70,13 @@ std::vector<double> cepstralSmooth(SymmetricFft& fft, const std::vector<double>&
     return fft.transform(cep);
 }
 
-std::vector<double> logSpectrum(const double* frame, size_t n, size_t nfft)
-{
-    std::vector<double> in(nfft, 0.0);
-    for (size_t i = 0; i < n; ++i)
-        in[i] = frame[i] * (0.5 - 0.5 * std::cos(2.0 * pi * static_cast<double>(i) / static_cast<double>(std::max<size_t>(1, n - 1))));
-    std::vector<double> out(nfft + 2);
-    auto plan = fft_plan_dft_r2c_1d(static_cast<int>(nfft), in.data(), reinterpret_cast<fft_complex*>(out.data()), FFT_ESTIMATE);
-    fft_execute(plan);
-    fft_destroy_plan(plan);
-    std::vector<double> logAmp(nfft / 2 + 1);
-    for (size_t m = 0; m < logAmp.size(); ++m)
-        logAmp[m] = std::log(std::hypot(out[2 * m], out[2 * m + 1]) + floorAmp);
-    return logAmp;
-}
-
 size_t cepstralOrder(size_t nfft, int sampleRate, double f0Hz)
 {
     const auto f0 = f0Hz > 0.0 ? f0Hz : fallbackF0Hz;
     const auto k = static_cast<size_t>(std::lround(0.5 * sampleRate / f0));
     return std::clamp<size_t>(k, 4, nfft / 2 - 1);
 }
+
 // A = max(목표, 평활)를 되풀이해 평활이 목표 위로 올라갈 때까지 (최대 오차 < 2 dB 또는 50회)
 std::vector<double> refineEnvelope(SymmetricFft& fft, const std::vector<double>& target, size_t order)
 {
@@ -109,5 +111,7 @@ std::vector<double> trueEnvelope(const double* frame, size_t n, int sampleRate, 
         return {};
     const auto nfft = trueEnvelopeFftSize(n);
     SymmetricFft fft(nfft);
-    return refineEnvelope(fft, logSpectrum(frame, n, nfft), cepstralOrder(nfft, sampleRate, f0Hz));
+    if (! fft.ok())
+        return {};
+    return refineEnvelope(fft, fft.logSpectrum(frame, n), cepstralOrder(nfft, sampleRate, f0Hz));
 }

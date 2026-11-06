@@ -92,6 +92,34 @@ Cx polyAt(const std::vector<double>& a, Cx z)
     return v;
 }
 
+// 다른 근들과의 차이의 곱. 근이 겹쳐 0이면 z[k]를 살짝 밀어 나눗셈이 터지지 않게 한다
+Cx separation(std::vector<Cx>& z, size_t k)
+{
+    Cx den = 1.0;
+    for (size_t j = 0; j < z.size(); ++j)
+        if (j != k) den *= z[k] - z[j];
+    if (std::abs(den) < 1e-30)
+    {
+        z[k] += Cx(1e-6, 1e-6) * (1.0 + static_cast<double>(k));
+        return separation(z, k);
+    }
+    return den;
+}
+
+// 한 번 갱신하고 가장 큰 이동량을 돌려준다
+double durandKernerStep(const std::vector<double>& a, std::vector<Cx>& z)
+{
+    double move = 0.0;
+    for (size_t k = 0; k < z.size(); ++k)
+    {
+        const auto den = separation(z, k);
+        const auto delta = polyAt(a, z[k]) / den;
+        z[k] -= delta;
+        move = std::max(move, std::abs(delta));
+    }
+    return move;
+}
+
 // Durand-Kerner: z^p + a1 z^(p-1) + ... + ap 의 모든 근
 std::vector<Cx> polyRoots(const std::vector<double>& a)
 {
@@ -99,19 +127,7 @@ std::vector<Cx> polyRoots(const std::vector<double>& a)
     std::vector<Cx> z(p);
     for (size_t k = 0; k < p; ++k)
         z[k] = 0.8 * std::polar(1.0, 2.0 * pi * static_cast<double>(k) / static_cast<double>(p) + 0.4);
-    for (int it = 0; it < 300; ++it)
-    {
-        double move = 0.0;
-        for (size_t k = 0; k < p; ++k)
-        {
-            Cx den = 1.0;
-            for (size_t j = 0; j < p; ++j) if (j != k) den *= z[k] - z[j];
-            const auto delta = polyAt(a, z[k]) / den;
-            z[k] -= delta;
-            move = std::max(move, std::abs(delta));
-        }
-        if (move < 1e-11) break;
-    }
+    for (int it = 0; it < 300 && durandKernerStep(a, z) >= 1e-11; ++it) {}
     return z;
 }
 

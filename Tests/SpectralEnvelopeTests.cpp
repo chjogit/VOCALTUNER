@@ -1,6 +1,7 @@
 #include "VowelSynth.h"
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstdio>
 
 namespace
@@ -57,6 +58,19 @@ void testEnvelope(const char* name, const vowelsynth::Vowel& v, double f0)
           "True Envelope peaks near F1/F2 (F1 near f0: within f0/2)");
 }
 
+// 원본 프레임 (Hann 창, nfft로 0 채움)의 빈 m 로그 진폭. 구현과 같은 규약
+double logAmpAt(const std::vector<double>& frame, size_t nfft, size_t m)
+{
+    std::complex<double> c = 0.0;
+    const auto n = static_cast<double>(frame.size());
+    for (size_t i = 0; i < frame.size(); ++i)
+    {
+        const auto w = 0.5 - 0.5 * std::cos(2.0 * 3.14159265358979323846 * static_cast<double>(i) / (n - 1.0));
+        c += w * frame[i] * std::polar(1.0, -2.0 * 3.14159265358979323846 * static_cast<double>(m * i) / static_cast<double>(nfft));
+    }
+    return std::log(std::abs(c) + 1e-12);
+}
+
 void testEnvelopeAboveSpectrum()
 {
     const auto v = vowelsynth::vowelA();
@@ -66,6 +80,17 @@ void testEnvelopeAboveSpectrum()
     double sum = 0.0;
     for (const auto e : env) sum += e;
     check(std::isfinite(sum), "envelope is finite");
+    const auto nfft = trueEnvelopeFftSize(frame.size());
+    double worst = -1e9;
+    int harmonics = 0;
+    for (double hz = 120.0; hz < 4000.0; hz += 120.0, ++harmonics)
+    {
+        const auto m = static_cast<size_t>(std::lround(hz * static_cast<double>(nfft) / sr));
+        for (const auto bin : { m - 1, m, m + 1 })
+            worst = std::max(worst, logAmpAt(frame, nfft, bin) - env[bin]);
+    }
+    std::printf("  worst (spectrum - envelope) over %d voiced harmonics: %.2f dB\n", harmonics, worst * 8.685889638);
+    check(worst <= 2.0 / 8.685889638, "envelope stays within 2 dB below the log spectrum on voiced harmonic bins");
     check(trueEnvelope(nullptr, 0, sr, 120.0).empty(), "empty input gives empty envelope");
     check(! trueEnvelope(frame.data(), frame.size(), sr, 0.0).empty(), "unvoiced fallback works");
 }
