@@ -27,10 +27,8 @@ VocalBlock block(size_t begin, size_t end)
     return b;
 }
 
-// 구조와 편집 필드를 모두 기본값이 아닌 값으로 채운 블록
-VocalBlock editedBlock(size_t begin, size_t end, int id)
+void fillStructure(VocalBlock& b, size_t begin, size_t end, int id)
 {
-    auto b = block(begin, end);
     b.id = id;
     b.startSec = begin * 0.005 + 0.001;
     b.endSec = end * 0.005 - 0.002;
@@ -38,16 +36,14 @@ VocalBlock editedBlock(size_t begin, size_t end, int id)
     b.isConsonant = id % 2 == 0;
     b.isContinuation = id % 3 == 0;
     b.lyric = "\xEA\xB0\x80 la";
+}
+
+void fillScalarEdits(VocalBlock& b)
+{
     b.pitchShift = 1.25;
     b.gainDb = -4.5;
     b.startOffsetSec = 0.011;
     b.endOffsetSec = -0.013;
-    for (size_t i = begin; i < end; ++i)
-    {
-        b.curveOffset.push_back(0.1f * static_cast<float>(i - begin));
-        b.curveWarp.push_back(-0.25f * static_cast<float>(i - begin));
-    }
-    b.userHandles = { begin + 1, end - 1 };
     b.transitionAfter = 0.8;
     b.vibratoDepth = 0.4;
     b.vibratoRateHz = 6.1;
@@ -55,7 +51,37 @@ VocalBlock editedBlock(size_t begin, size_t end, int id)
     b.tidyAmount = 0.6;
     b.driftAmount = -0.2;
     b.centerTargetMidi = 62;
+}
+
+void fillCurves(VocalBlock& b, size_t begin, size_t end)
+{
+    for (size_t i = begin; i < end; ++i)
+    {
+        b.curveOffset.push_back(0.1f * static_cast<float>(i - begin));
+        b.curveWarp.push_back(-0.25f * static_cast<float>(i - begin));
+    }
+    b.userHandles = { begin + 1, end - 1 };
+}
+
+// 구조와 편집 필드를 모두 기본값이 아닌 값으로 채운 블록
+VocalBlock editedBlock(size_t begin, size_t end, int id)
+{
+    auto b = block(begin, end);
+    fillStructure(b, begin, end, id);
+    fillScalarEdits(b);
+    fillCurves(b, begin, end);
     return b;
+}
+
+// 14개 편집 필드를 하나씩 비교 (sameEdits에 의존하지 않음)
+bool sameEditFields(const VocalBlock& a, const VocalBlock& b)
+{
+    return a.pitchShift == b.pitchShift && a.gainDb == b.gainDb && a.startOffsetSec == b.startOffsetSec
+           && a.endOffsetSec == b.endOffsetSec && a.curveOffset == b.curveOffset && a.curveWarp == b.curveWarp
+           && a.userHandles == b.userHandles && a.transitionAfter == b.transitionAfter
+           && a.vibratoDepth == b.vibratoDepth && a.vibratoRateHz == b.vibratoRateHz
+           && a.flattenAmount == b.flattenAmount && a.tidyAmount == b.tidyAmount && a.driftAmount == b.driftAmount
+           && a.centerTargetMidi == b.centerTargetMidi;
 }
 
 bool sameStructure(const VocalBlock& a, const VocalBlock& b)
@@ -70,7 +96,7 @@ bool sameList(const std::vector<VocalBlock>& a, const std::vector<VocalBlock>& b
     if (a.size() != b.size())
         return false;
     for (size_t i = 0; i < a.size(); ++i)
-        if (! sameStructure(a[i], b[i]) || ! sameEdits(a[i], b[i]))
+        if (! sameStructure(a[i], b[i]) || ! sameEditFields(a[i], b[i]))
             return false;
     return true;
 }
@@ -170,6 +196,9 @@ void testNonFinite()
     auto nanCurve = block(10, 12);
     nanCurve.curveOffset = { 0.f, std::nanf("") };
     check(! decodes(encodeEditState({ nanCurve }, fp)), "NaN curve value is rejected");
+    auto nanWarp = block(10, 12);
+    nanWarp.curveWarp = { std::nanf(""), 0.f };
+    check(! decodes(encodeEditState({ nanWarp }, fp)), "NaN curveWarp value is rejected");
 }
 
 void testHasEdits()
@@ -198,6 +227,20 @@ void testHugeLengths()
     for (int i = 0; i < 4; ++i)
         bytes[32 + i] = 0xFF;
     check(! decodes(bytes), "huge block count is rejected without allocating");
+
+    // 첫 블록: 구조 54바이트(lyric 길이 필드는 오프셋 36+54-4) 뒤에 편집 필드가 이어짐
+    constexpr size_t blockStart = 36;
+    constexpr size_t lyricLen = blockStart + 50;   // id4 begin8 end8 start8 end8 midi4 off8 flags2 -> 50
+    auto lyric = encodeEditState({ block(10, 30) }, fp);
+    for (int i = 0; i < 4; ++i)
+        lyric[lyricLen + i] = 0xFF;
+    check(! decodes(lyric), "huge lyric length is rejected");
+
+    // curveOffset 길이 필드: 구조 54 + 스칼라 4개(32) 뒤
+    auto curve = encodeEditState({ block(10, 30) }, fp);
+    for (int i = 0; i < 4; ++i)
+        curve[blockStart + 54 + 32 + i] = 0xFF;
+    check(! decodes(curve), "huge curve count is rejected");
 }
 } // namespace
 

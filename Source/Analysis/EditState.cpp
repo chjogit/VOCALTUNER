@@ -125,6 +125,7 @@ bool handlesOk(const VocalBlock& b)
     return true;
 }
 
+// 구조(범위/길이)와 유한한 실수만 검사하고 편집 값의 범위는 보지 않는다 (플러그인이 직접 쓴 데이터)
 // 범위가 프레임 안에 있고 앞 블록과 겹치지 않으며, 곡선/핸들이 범위에 맞아야 함
 bool blockValid(const VocalBlock& b, size_t previousEnd, size_t numFrames)
 {

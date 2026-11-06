@@ -55,11 +55,12 @@ bool readId(juce::InputStream& in, std::string& id)
     return true;
 }
 
-const std::vector<juce::ARAAudioSource*>& documentSources(ARA::PlugIn::DocumentController* controller)
+std::vector<juce::ARAAudioSource*> documentSources(ARA::PlugIn::DocumentController* controller)
 {
-    static const std::vector<juce::ARAAudioSource*> none;
     auto* document = controller != nullptr ? controller->getDocument() : nullptr;
-    return document != nullptr ? document->getAudioSources<juce::ARAAudioSource>() : none;
+    if (document == nullptr)
+        return {};
+    return document->getAudioSources<juce::ARAAudioSource>();   // 값으로 복사
 }
 
 // 저장 대상 소스 목록: 필터가 없으면 문서의 모든 소스
@@ -82,17 +83,17 @@ juce::ARAAudioSource* findSource(ARA::PlugIn::DocumentController* controller, co
     return nullptr;
 }
 
-// 항목 count개를 읽어 맞는 소스에 맡긴다. 못 찾는 id는 건너뜀. 읽기 실패면 false
-bool restoreEntries(juce::InputStream& input, int count, AnalysisManager& analysis,
-                    ARA::PlugIn::DocumentController* controller, const juce::ARARestoreObjectsFilter* filter)
+// 항목 count개를 모두 읽는다. 하나라도 실패하면 false (아무것도 적용하지 않기 위해 읽기와 적용을 나눔)
+bool readEntries(juce::InputStream& input, int count, std::vector<ArchivedSource>& entries)
 {
+    if (count < 0)
+        return false;
     for (int i = 0; i < count; ++i)
     {
         ArchivedSource archived;
         if (! readId(input, archived.id) || ! readBytes(input, archived.state))
             return false;
-        if (auto* source = findSource(controller, filter, archived.id))
-            analysis.setRestoredState(source, std::move(archived.state));
+        entries.push_back(std::move(archived));
     }
     return true;
 }
@@ -111,9 +112,13 @@ bool VocalTunerDocumentController::doRestoreObjectsFromStream(juce::ARAInputStre
     if (magic != archiveMagic || version != archiveVersion)
         return true;   // 알 수 없는 형식은 건너뜀 (분석 결과만 쓴다)
 
-    if (! restoreEntries(input, count, analysis, getDocumentController(), filter))
+    std::vector<ArchivedSource> entries;
+    if (! readEntries(input, count, entries) || input.failed())
         return false;
-    return ! input.failed();
+    for (auto& archived : entries)   // 전부 읽은 뒤에만 적용. 못 찾는 id는 건너뜀
+        if (auto* source = findSource(getDocumentController(), filter, archived.id))
+            analysis.setRestoredState(source, std::move(archived.state));
+    return true;
 }
 
 bool VocalTunerDocumentController::doStoreObjectsToStream(juce::ARAOutputStream& output,

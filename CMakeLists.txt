@@ -112,7 +112,8 @@ target_sources(VocalTuner
         Source/PlaybackPreview.cpp
         Source/PluginEditorPreview.cpp
         Source/Analysis/AnalysisTask.cpp
-        Source/Analysis/AnalysisManager.cpp)
+        Source/Analysis/AnalysisManager.cpp
+        Source/Analysis/AnalysisManagerState.cpp)
 
 # 한글 주석이 CP949로 해석되지 않도록 소스를 UTF-8로 컴파일
 if(MSVC)
