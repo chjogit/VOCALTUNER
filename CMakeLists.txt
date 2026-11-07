@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(VocalTuner VERSION 1.1.11)
+project(VocalTuner VERSION 1.2.0)
 
 option(VOCALTUNER_BUILD_TESTS "Build unit tests" ON)
 # ON이면 JUCE 없이 vocaltuner_core + 테스트만 빌드 (Linux CI/검증용)
