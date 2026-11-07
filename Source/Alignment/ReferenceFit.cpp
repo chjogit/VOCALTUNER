@@ -229,6 +229,50 @@ bool isRunPassingNote(const std::vector<VocalBlock>& blocks, size_t index)
     return isShortVoiced(blocks[index]) && touchingVoiced(blocks, index, -1) && touchingVoiced(blocks, index, +1);
 }
 
+void movePhrasesRigidly(std::vector<BlockUpdate>& updates, const std::vector<VocalBlock>& baseline, const VocalFeatures& target)
+{
+    if (updates.size() != baseline.size() || target.size() == 0)
+        return;
+    const auto period = target.framePeriodMs / 1000.0;
+    constexpr double silentRms = 0.01;
+    constexpr size_t guard = 4, minSilentFrames = 12;
+    const auto silentFrames = [&](double from, double to) {
+        size_t count = 0;
+        const auto first = static_cast<size_t>(std::max(0.0, from / period));
+        const auto last = std::min(target.size(), static_cast<size_t>(std::max(0.0, to / period)));
+        for (auto j = first; j < last; ++j)
+        {
+            bool quiet = true;
+            for (auto k = j >= guard ? j - guard : 0; k <= std::min(target.size() - 1, j + guard) && quiet; ++k)
+                quiet = target.midiF0[k] <= 0.0 && target.rms[k] < silentRms;
+            count += quiet ? 1 : 0;
+        }
+        return count;
+    };
+    for (size_t a = 0; a < baseline.size();)
+    {
+        auto b = a + 1;
+        while (b < baseline.size() && silentFrames(baseline[b - 1].endSec, baseline[b].startSec) < minSilentFrames) ++b;
+        std::vector<double> moves;
+        for (auto i = a; i < b; ++i) moves.push_back(updates[i].block.displayStartSec() - baseline[i].displayStartSec());
+        std::nth_element(moves.begin(), moves.begin() + static_cast<long>(moves.size() / 2), moves.end());
+        const auto move = moves[moves.size() / 2];
+        for (auto i = a; i < b; ++i)
+        {
+            updates[i].block.startOffsetSec = baseline[i].startOffsetSec + move;
+            updates[i].block.endOffsetSec = baseline[i].endOffsetSec + move;
+        }
+        a = b;
+    }
+    for (size_t i = 1; i < updates.size(); ++i)
+        if (updates[i].block.displayStartSec() < updates[i - 1].block.displayEndSec())
+        {
+            const auto push = updates[i - 1].block.displayEndSec() - updates[i].block.displayStartSec();
+            updates[i].block.startOffsetSec += push;
+            updates[i].block.endOffsetSec += push;
+        }
+}
+
 std::vector<BlockUpdate> fitToReference(const std::vector<VocalBlock>& baseline, double targetOffset, const TimeMap& map,
                                         const std::vector<VocalBlock>& referenceBlocks, double referenceOffset, const TrackRoles& roles,
                                         const MelodyTrack* melody, const VocalFeatures* referenceCurve)

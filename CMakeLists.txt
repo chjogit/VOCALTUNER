@@ -199,6 +199,13 @@ if(VOCALTUNER_BUILD_TESTS)
     endif()
     add_test(NAME RollViewportTests COMMAND RollViewportTests)
 
+    add_executable(PhraseMoveTests Tests/PhraseMoveTests.cpp)
+    target_link_libraries(PhraseMoveTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(PhraseMoveTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME PhraseMoveTests COMMAND PhraseMoveTests)
+
     add_executable(BandAlignTests Tests/BandAlignTests.cpp)
     target_link_libraries(BandAlignTests PRIVATE vocaltuner_core)
     if(MSVC)

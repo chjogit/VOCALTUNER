@@ -44,6 +44,12 @@ std::vector<BlockUpdate> fitToReference(const std::vector<VocalBlock>& baseline,
                                         const std::vector<VocalBlock>& referenceBlocks, double referenceOffsetSec, const TrackRoles&,
                                         const MelodyTrack* melody = nullptr, const VocalFeatures* referenceCurve = nullptr);
 
+// 프레이즈 통째 이동 (사용자 청취 선택 11/7: 원본 소리를 늘이지 않는 쪽이 낫다).
+// 타깃을 거의 무음(무성, rms < 0.01, 앞뒤 소리에서 20 ms 넘게 떨어짐)이 60 ms 넘게 있는 틈에서 프레이즈로 나누고,
+// 프레이즈마다 맞춘 시작 이동량의 중앙값만큼 모든 블록을 같이 옮긴다. 음정 등 다른 편집 값은 updates 그대로.
+// 앞 프레이즈와 겹치면 겹치지 않을 만큼만 늦춘다. updates는 fitToReference 결과(모든 블록, 인덱스 순서)
+void movePhrasesRigidly(std::vector<BlockUpdate>& updates, const std::vector<VocalBlock>& baseline, const VocalFeatures& target);
+
 // 개별 단계 (테스트/재사용)
 VocalBlock withTimingFitted(const VocalBlock&, double targetOffsetSec, const TimeMap&, double amount);
 // 레퍼런스 블록들 중 [startSong, endSong] 와 겹치는 유성 블록의 길이 가중 평균 음정. 없으면 음수.

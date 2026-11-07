@@ -83,45 +83,12 @@ int main(int argc, char** argv)
     for (const auto& u : fitToReference(blocks, 0.0, map, {}, 0.0, roles)) fitted[u.index] = u.block;
     // BR_RIGID_PHRASE: 늘이지 않고 프레이즈(0.15 s 넘는 틈으로 나뉜 블록 묶음)를 통째로 옮기기만 한다.
     // 옮기는 양 = 그 프레이즈 블록들의 맞춘 이동량(시작) 중앙값. 소리 자체는 원본 그대로이고, 틈 길이만 바뀐다
-    if (std::getenv("BR_RIGID_PHRASE"))
+    if (std::getenv("BR_RIGID_PHRASE"))   // 플러그인과 같은 프레이즈 통째 이동
     {
-        for (size_t a = 0; a < blocks.size();)
-        {
-            auto b = a + 1;
-            // 틈에 거의 무음(앞뒤 소리에서 20 ms 넘게 떨어진, rms 0.01 아래)이 60 ms 넘게 있어야 거기서 나눈다.
-            // 그런 틈만 길이가 바뀌어도 소리에 닿지 않는다 (숨·자음·어택이 든 틈은 앞뒤 프레이즈를 같이 옮긴다)
-            const auto silentFrames = [&](double from, double to) {
-                size_t count = 0;
-                const auto first = static_cast<size_t>(std::max(0.0, from / 0.005)), last = std::min(features->size(), static_cast<size_t>(to / 0.005));
-                for (auto j = first; j < last; ++j)
-                {
-                    bool quiet = true;
-                    for (auto k = j >= 4 ? j - 4 : 0; k <= std::min(features->size() - 1, j + 4) && quiet; ++k)
-                        quiet = features->midiF0[k] <= 0.0 && features->rms[k] < 0.01;
-                    count += quiet ? 1 : 0;
-                }
-                return count;
-            };
-            while (b < blocks.size() && silentFrames(blocks[b - 1].endSec, blocks[b].startSec) < 12) ++b;
-            std::vector<double> moves;
-            for (auto i = a; i < b; ++i) moves.push_back(fitted[i].displayStartSec() - blocks[i].displayStartSec());
-            std::nth_element(moves.begin(), moves.begin() + static_cast<long>(moves.size() / 2), moves.end());
-            const auto move = moves[moves.size() / 2];
-            for (auto i = a; i < b; ++i)
-            {
-                fitted[i] = blocks[i];
-                fitted[i].startOffsetSec = blocks[i].startOffsetSec + move;
-                fitted[i].endOffsetSec = blocks[i].endOffsetSec + move;
-            }
-            a = b;
-        }
-        for (size_t i = 1; i < fitted.size(); ++i)   // 앞 프레이즈와 겹치면 뒤 프레이즈를 겹치지 않을 만큼만 늦춘다
-            if (fitted[i].displayStartSec() < fitted[i - 1].displayEndSec())
-            {
-                const auto push = fitted[i - 1].displayEndSec() - fitted[i].displayStartSec();
-                fitted[i].startOffsetSec += push;
-                fitted[i].endOffsetSec += push;
-            }
+        std::vector<BlockUpdate> updates;
+        for (size_t i = 0; i < fitted.size(); ++i) updates.push_back({ i, fitted[i] });
+        movePhrasesRigidly(updates, blocks, *features);
+        for (const auto& u : updates) fitted[u.index] = u.block;
     }
 
     auto* moves = std::fopen((prefix + "_moves.txt").c_str(), "w");

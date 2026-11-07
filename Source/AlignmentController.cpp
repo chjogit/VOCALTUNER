@@ -302,8 +302,12 @@ AlignmentController::Outcome AlignmentController::apply(const juce::ARAPlaybackR
     const auto referenceCurve = p.referenceIsMix ? nullptr : analysis.getFeatures(sourceOf(p.reference));
     auto roles = settings(target).roles;
     roles.rigidGaps = bandTiming && ! p.referenceIsMix;   // 대역 DTW 박자일 때만 (기존 박자 맞추기 결과는 그대로)
-    const auto updates = fitToReference(*baseline, offsetOf(target), aligned->targetToReference, *referenceBlocks,
-                                        offsetOf(p.reference), roles, melodyToUse, referenceCurve.get());
+    auto updates = fitToReference(*baseline, offsetOf(target), aligned->targetToReference, *referenceBlocks,
+                                  offsetOf(p.reference), roles, melodyToUse, referenceCurve.get());
+    // 대역 DTW 박자: 소리를 늘이지 않고 프레이즈를 통째로 옮긴다 (사용자 청취 선택 11/7)
+    if (roles.timing && bandTiming && ! p.referenceIsMix)
+        if (const auto targetFeatures = analysis.getFeatures(targetSource))
+            movePhrasesRigidly(updates, *baseline, *targetFeatures);
     if (beginGesture)
     {
         if (onBeforeApply)
