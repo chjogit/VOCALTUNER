@@ -73,16 +73,30 @@ EditTimeMap::EditTimeMap(const std::vector<VocalBlock>& blocks, const VocalFeatu
         struct Piece { double length; bool stretch; };
         std::vector<Piece> pieces;
         double fixedLength = 0.0, stretchLength = 0.0;
-        for (auto t = s0; t < s1 - 1e-12;)
-        {
-            const auto j = static_cast<size_t>(std::max(0.0, std::floor(t / period + 1e-9)));
-            const auto end = std::min(s1, static_cast<double>(j + 1) * period);
-            const bool e = elastic(j);
-            if (! pieces.empty() && pieces.back().stretch == e) pieces.back().length += end - t;
-            else pieces.push_back({ end - t, e });
-            (e ? stretchLength : fixedLength) += end - t;
-            t = end;
-        }
+        const auto split = [&](const auto& stretchable) {
+            pieces.clear();
+            fixedLength = stretchLength = 0.0;
+            for (auto t = s0; t < s1 - 1e-12;)
+            {
+                const auto j = static_cast<size_t>(std::max(0.0, std::floor(t / period + 1e-9)));
+                const auto end = std::min(s1, static_cast<double>(j + 1) * period);
+                const bool e = stretchable(j);
+                if (! pieces.empty() && pieces.back().stretch == e) pieces.back().length += end - t;
+                else pieces.push_back({ end - t, e });
+                (e ? stretchLength : fixedLength) += end - t;
+                t = end;
+            }
+        };
+        split(elastic);
+        // 모음이 없는 구간(블록 사이 틈): 숨·잡음은 그대로 두고, 거의 무음인 프레임만 늘이고 줄인다 (앞뒤 소리에서 20 ms 넘게 떨어진 곳)
+        if (stretchLength <= 0.0)
+            split([&](size_t j) {
+                constexpr double silentRms = 0.01;
+                constexpr size_t guard = 4;
+                for (auto k = j >= guard ? j - guard : 0; k <= std::min(f.size() - 1, j + guard); ++k)
+                    if (f.midiF0[k] > 0.0 || f.rms[k] >= silentRms) return false;
+                return true;
+            });
         if (stretchLength <= 0.0)
         {
             d2.push_back(d1); s2.push_back(s1);   // 모음이 없으면 고르게 (예전 방식)
