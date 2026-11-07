@@ -126,6 +126,13 @@ int main(int argc, char** argv)
                     moved ? sum / static_cast<double>(moved) : 0.0, worstCents);
     }
     std::fclose(moves);
+    {
+        // 렌더러가 쓰는 시간 대응(표시 -> 원본)을 1 ms마다 적어 둔다 (밖에서 원본과 맞대어 비교할 때 쓴다)
+        const EditTimeMap tm(fitted, *features);
+        auto* mapFile = std::fopen((prefix + "_timemap.txt").c_str(), "w");
+        for (double t = 0.0; t < length; t += 0.001) std::fprintf(mapFile, "%.3f %.6f\n", t, tm.toSource(t));
+        std::fclose(mapFile);
+    }
     if (const char* v = std::getenv("BR_PROBE"))   // "from,to" 파일 시간: 표시 시각마다 원본 시각과 기울기, 원본 유성 여부
     {
         const EditTimeMap tm(fitted, *features);
@@ -148,6 +155,48 @@ int main(int argc, char** argv)
     writeMix(prefix + "_1_before.wav", guide, take, gr);
     writeMix(prefix + "_2_band.wav", guide, out, gr);
     writeWavMono16((prefix + "_3_band_solo.wav").c_str(), out, tr);
+    // 음정 계단 측정: 출력의 음정 곡선(Harvest)을 원본 시각으로 되돌려 원본 음정과 비교.
+    // 박자만 바꿨으므로 같아야 한다. 프레임 사이 변화가 원본보다 크게 튀는 곳(계단의 턱)을 센다
+    {
+        // BR_CONTROL: 출력 대신 원본을 101샘플 늦춘 것을 재서, 분석 자체의 흔들림(바닥값)을 본다
+        const bool control = std::getenv("BR_CONTROL") != nullptr;
+        std::vector<double> measured(out.begin(), out.end());
+        auto controlBlocks = blocks;
+        if (control)
+        {
+            measured.assign(101, 0.0);
+            measured.insert(measured.end(), take.begin(), take.end());
+            measured.resize(take.size());
+            for (auto& b : controlBlocks) { b.startOffsetSec = 101.0 / tr; b.endOffsetSec = 101.0 / tr; }
+        }
+        FeatureOptions measureOptions;
+        if (const char* v = std::getenv("BR_FP")) measureOptions.framePeriodMs = std::atof(v);
+        const auto outFeatures = extractVocalFeatures(measured, tr, measureOptions);
+        const auto measurePeriod = measureOptions.framePeriodMs / 1000.0;
+        const EditTimeMap tm(control ? controlBlocks : fitted, *features);
+        size_t count = 0, steps = 0, off = 0;
+        double sum = 0.0;
+        double previousDev = 0.0;
+        bool havePrevious = false;
+        for (size_t i = 0; outFeatures && i < outFeatures->size(); ++i)
+        {
+            const auto t = static_cast<double>(i) * measurePeriod;
+            const auto s = tm.toSource(t) / 0.005;
+            const auto j = static_cast<size_t>(std::floor(s));
+            if (j + 1 >= features->size() || outFeatures->midiF0[i] <= 0.0 || features->midiF0[j] <= 0.0 || features->midiF0[j + 1] <= 0.0)
+            { havePrevious = false; continue; }
+            const auto expected = features->midiF0[j] + (features->midiF0[j + 1] - features->midiF0[j]) * (s - static_cast<double>(j));
+            const auto dev = 100.0 * (outFeatures->midiF0[i] - expected);
+            ++count;
+            sum += std::abs(dev);
+            off += std::abs(dev) > 20.0 ? 1 : 0;
+            if (havePrevious && std::abs(dev - previousDev) > 15.0) ++steps;
+            previousDev = dev;
+            havePrevious = true;
+        }
+        std::printf("pitch vs original: %zu voiced frames, mean |dev| %.1f cents, %.1f%% off by >20 cents, %zu step jumps >15 cents between frames\n",
+                    count, count ? sum / static_cast<double>(count) : 0.0, count ? 100.0 * static_cast<double>(off) / static_cast<double>(count) : 0.0, steps);
+    }
     std::printf("blocks %zu, rendered %zu samples\n", fitted.size(), out.size());
     return 0;
 }

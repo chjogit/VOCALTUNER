@@ -99,7 +99,11 @@ void copyRigidMoves(ChunkAudio& out, const AudioPlanes& src, const EditGrid& gri
     {
         const auto t = static_cast<double>(out.startSample + i) / rate;
         const auto s = grid.timeMap->toSource(t);
-        const bool rigid = std::abs(grid.timeMap->toSource(t + probe) - s - probe) < 1e-7 && std::abs(s - grid.timeMap->toSource(t - probe) - probe) < 1e-7;
+        // 기울기가 1에서 0.3% 안이면(음정으로 5센트 안) 원본을 그 기울기로 읽어 그대로 쓴다. PSOLA로 만들면 원본 마크에 붙어 있다가
+        // 쌓인 어긋남만큼 한 주기를 한꺼번에 건너뛰거나 되풀이해 그 자리가 '틱'이 된다
+        constexpr double nearlyRigid = 0.003;
+        const bool rigid = std::abs((grid.timeMap->toSource(t + probe) - s) / probe - 1.0) < nearlyRigid
+                           && std::abs((s - grid.timeMap->toSource(t - probe)) / probe - 1.0) < nearlyRigid;
         const auto frame = std::min(shift.size() - 1, static_cast<size_t>(std::max(0.0, t / period)));
         mask[i] = rigid && (shift.empty() || std::abs(shift[frame]) <= tolerance) ? 1.0 : 0.0;
     }

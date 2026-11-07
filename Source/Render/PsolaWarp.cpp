@@ -101,13 +101,26 @@ struct Warper
 
     void voicedGrain(double& t)
     {
-        const auto k = static_cast<size_t>(nearestMark(marks, sourceSample(in, t)));
-        const auto period = periodOf(k);
+        const auto at = sourceSample(in, t);
+        const auto k = static_cast<size_t>(nearestMark(marks, at));
+        // 다음 조각까지의 간격은 원본에서 지금 읽는 자리의 주기 (양옆 마크 주기 사이를 보간).
+        // 가까운 마크의 주기를 그대로 쓰면 늘인 곳에서 같은 주기가 되풀이되다 다음 마크에서 한 번에 바뀌어 음정이 계단처럼 들린다
+        auto period = static_cast<double>(periodOf(k));
+        {
+            const auto lo = static_cast<long>(at) >= marks[k] ? k : (k > 0 ? k - 1 : k);
+            const auto hi = std::min(lo + 1, marks.size() - 1);
+            const auto span = static_cast<double>(marks[hi] - marks[lo]);
+            if (hi != lo && span > 0.0 && span <= in.sampleRate / maxGapHz)
+            {
+                const auto x = std::clamp((at - static_cast<double>(marks[lo])) / span, 0.0, 1.0);
+                period = static_cast<double>(periodOf(lo)) + (static_cast<double>(periodOf(hi)) - static_cast<double>(periodOf(lo))) * x;
+            }
+        }
         const auto shift = shiftAtOutput(in, t);
         const auto ratio = formantRatio(formantAtOutput(in, t), shift);
-        addGrain(source, synth, marks[k], std::lround(t), grainHalf(period, shift, ratio), ratio);
-        const auto next = t + static_cast<double>(period) / std::pow(2.0, shift / 12.0);
-        t = std::max(lockedNext(next, shift, slopeAt(t)), t + 0.5 * static_cast<double>(period));
+        addGrain(source, synth, marks[k], std::lround(t), grainHalf(periodOf(k), shift, ratio), ratio);
+        const auto next = t + period / std::pow(2.0, shift / 12.0);
+        t = std::max(lockedNext(next, shift, slopeAt(t)), t + 0.5 * period);
     }
 
     void unvoicedGrain(double& t, long hop)
