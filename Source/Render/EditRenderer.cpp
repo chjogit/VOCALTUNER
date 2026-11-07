@@ -122,6 +122,64 @@ void copyRigidMoves(ChunkAudio& out, const AudioPlanes& src, const EditGrid& gri
         const auto lo = i >= half ? i - half : 0, hi = std::min(n, i + half + 1);
         smooth[i] = (prefix[hi] - prefix[lo]) / static_cast<double>(hi - lo);
     }
+    // 섞는 곳의 위상 맞춤: 복사로 들어가는(나오는) 경계마다, 그 앞(뒤) 10 ms에서 PSOLA 결과를 원본 복사에 가장 잘 맞추는
+    // 어긋남 d(±1.5 ms)를 찾고, PSOLA 쪽을 경계 앞(뒤) 20 ms에 걸쳐 0 -> d로 서서히 옮겨 둔다. 그대로 섞으면 반 주기쯤 어긋난
+    // 두 소리가 서로 지워 소리가 꺼지거나(끊김) 겹쳐 들린다(더블링)
+    {
+        const auto sourceAt = [&](const std::vector<float>& x, size_t i) {
+            const auto pos = grid.timeMap->toSource(static_cast<double>(out.startSample + i) / rate) * rate;
+            const auto k = static_cast<long>(std::floor(pos));
+            if (k < 0 || k + 1 >= static_cast<long>(x.size())) return 0.0;
+            const auto f = pos - static_cast<double>(k);
+            return (1.0 - f) * x[static_cast<size_t>(k)] + f * x[static_cast<size_t>(k + 1)];
+        };
+        const auto window = static_cast<long>(0.010 * rate), ramp = static_cast<long>(0.020 * rate), reach = static_cast<long>(0.0015 * rate);
+        const auto& y0 = out.channels.front();
+        std::vector<std::pair<long, int>> edges;   // (경계 표본, +1 = 복사로 들어감, -1 = 복사에서 나옴)
+        for (size_t i = 1; i < n; ++i)
+        {
+            if (smooth[i - 1] <= 0.0 && smooth[i] > 0.0) edges.push_back({ static_cast<long>(i), +1 });
+            if (smooth[i - 1] > 0.0 && smooth[i] <= 0.0) edges.push_back({ static_cast<long>(i), -1 });
+        }
+        auto original = out.channels;   // 옮기기 전 PSOLA 결과
+        for (const auto& [edge, direction] : edges)
+        {
+            // 비교 구간: 들어가는 경계면 [edge - window, edge), 나오는 경계면 [edge, edge + window)
+            const auto a = direction > 0 ? edge - window : edge, b = direction > 0 ? edge : edge + window;
+            if (a - reach < 0 || b + reach >= static_cast<long>(n)) continue;
+            double best = -1e300;
+            long shiftBy = 0;
+            double energy = 0.0;
+            for (auto j = a; j < b; ++j) energy += sourceAt(src.channels.front(), static_cast<size_t>(j)) * sourceAt(src.channels.front(), static_cast<size_t>(j));
+            if (energy < 1e-6 * static_cast<double>(window)) continue;   // 조용한 곳은 위상이 상관없다
+            for (auto d = -reach; d <= reach; ++d)
+            {
+                double c = 0.0, e = 0.0;
+                for (auto j = a; j < b; ++j)
+                {
+                    const auto yv = static_cast<double>(y0[static_cast<size_t>(j + d)]);
+                    c += yv * sourceAt(src.channels.front(), static_cast<size_t>(j));
+                    e += yv * yv;
+                }
+                const auto score = c / std::sqrt(e + 1e-12);
+                if (score > best) { best = score; shiftBy = d; }
+            }
+            if (shiftBy == 0) continue;
+            // PSOLA 쪽을 r(i) * shiftBy 만큼 당겨 읽는다. r은 경계에서 1, ramp만큼 떨어지면 0
+            for (size_t c = 0; c < out.channels.size(); ++c)
+                for (long k = 0; k < ramp; ++k)
+                {
+                    const auto i = direction > 0 ? edge - 1 - k : edge + k;
+                    if (i < 0 || i >= static_cast<long>(n)) break;
+                    const auto r = 1.0 - static_cast<double>(k) / static_cast<double>(ramp);
+                    const auto pos = static_cast<double>(i) + r * static_cast<double>(shiftBy);
+                    const auto p = static_cast<long>(std::floor(pos));
+                    if (p < 0 || p + 1 >= static_cast<long>(n)) continue;
+                    const auto f = pos - static_cast<double>(p);
+                    out.channels[c][static_cast<size_t>(i)] = static_cast<float>((1.0 - f) * original[c][static_cast<size_t>(p)] + f * original[c][static_cast<size_t>(p + 1)]);
+                }
+        }
+    }
     for (size_t c = 0; c < out.channels.size(); ++c)
     {
         const auto& x = src.channels[c];
@@ -175,15 +233,26 @@ ChunkAudio warpChunk(const AudioPlanes& src, const VocalFeatures& f, const EditG
     const auto samples = range.count;
     const auto shift = warpShiftCurve(src, f, grid, spanToQuiet(f, grid, span), tolerance);
     const auto* map = grid.timeMap.get();
+    // 복사 경계의 위상 맞춤은 경계 둘레 30 ms를 보므로, 앞뒤 50 ms를 더 만들어 처리한 뒤 잘라 낸다.
+    // 그래야 어느 구간을 렌더하든(미리 듣기 구간 렌더 = 전체 렌더) 같은 표본이 같은 값이 된다
+    const auto margin = static_cast<size_t>(0.05 * src.sampleRate);
+    ChunkAudio wide;
+    wide.startSample = out.startSample > margin ? out.startSample - margin : 0;
+    const auto lead = out.startSample - wide.startSample;
     for (const auto& ch : src.channels)
     {
         const WarpInput in { ch.data(), ch.size(), src.sampleRate, period, f.midiF0.data(), f.size(), shift.data(), shift.size(),
                              [map](double t) { return map->toSource(t); }, [map](double s) { return map->toDisplay(s); },
                              grid.formantEdited && grid.formantAmount.size() == shift.size() ? grid.formantAmount.data() : nullptr,
                              grid.levelMatch };
-        out.channels.push_back(psolaWarp(in, out.startSample, out.startSample + samples));
+        wide.channels.push_back(psolaWarp(in, wide.startSample, out.startSample + samples + margin));
     }
-    copyRigidMoves(out, src, grid, shift, period, tolerance);
+    copyRigidMoves(wide, src, grid, shift, period, tolerance);
+    for (auto& ch : wide.channels)
+    {
+        ch.resize(std::max(ch.size(), lead + samples), 0.0f);
+        out.channels.emplace_back(ch.begin() + static_cast<long>(lead), ch.begin() + static_cast<long>(lead + samples));
+    }
     keepSourceWhereUnchanged(out, src, renderedShare(grid, span, tolerance, period), period);
     return out;
 }

@@ -41,6 +41,9 @@ EditTimeMap::EditTimeMap(const std::vector<VocalBlock>& blocks, const VocalFeatu
             if (j < k || f.midiF0[j - k] <= 0.0) return false;
         for (size_t k = 0; k <= jumpFrames; ++k)
             if (j >= k && jumps(j - k)) return false;
+        // 음정이 빨리 움직이는 곳(꺾임·미끄러짐: 5 ms에 0.15반음 넘게)도 늘이지 않는다. 늘이면 꺾인 곡선이 끊겨 들린다
+        if (j + 1 < f.size() && f.midiF0[j + 1] > 0.0 && std::abs(f.midiF0[j + 1] - f.midiF0[j]) > 0.15) return false;
+        if (std::abs(f.midiF0[j] - f.midiF0[j - 1]) > 0.15) return false;
         return true;
     };
     std::vector<double> d2 { display.front() }, s2 { source.front() };
