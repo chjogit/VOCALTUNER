@@ -16,6 +16,11 @@ struct PsolaInput
     const double* sourceMidi = nullptr; // 원본 음정 (0 = 무성)
     const double* shiftSemitones = nullptr;   // 프레임마다 옮길 양 (반음)
     size_t frames = 0;
+    // 프레임마다 포먼트를 원본 자리에 두는 정도 (0..1). nullptr = 어디서나 1 (조각을 그대로 옮김, 기존 결과와 같다)
+    // 1보다 작으면 조각을 2^((1-양)*이동/12)배 빠르게 읽어 포먼트가 음정과 같이 움직인다
+    const double* formantAmount = nullptr;
+    // true면 합성한 구간의 음량을 원본에 맞춘다 (PsolaLevel.h). 기본 false = 기존 출력과 비트까지 같다
+    bool levelMatch = false;
 };
 
 // [beginSample, endSample) 구간의 결과. 옮길 것이 없는 곳(이동 0, 무성)은 원본 샘플 그대로다.

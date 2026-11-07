@@ -20,6 +20,8 @@ struct GuidedTimingOptions
     double jumpCostPerSec = 20.0;   // 이웃 구간과 시차가 1초 달라질 때의 벌점 (점수는 표준편차 단위)
     int transposeSemitones = 2;     // 음을 이만큼 틀리게 부른 프레이즈까지 박자를 찾는다
     std::function<bool()> shouldCancel;
+    // 진단용(선택): 구간마다 (시작 곡 시간, 유성 비율, 가장 뚜렷한 시차의 점수, 그 시차 초). 건너뛴 구간은 점수 0
+    std::function<void(double, double, double, double)> onWindow;
 };
 
 // 타깃 곡 시간 -> 원곡 곡 시간. 확신 있는 구간이 하나도 없으면 빈 TimeMap (박자를 옮기지 않는다).

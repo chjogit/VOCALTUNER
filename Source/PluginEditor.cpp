@@ -145,6 +145,7 @@ juce::ARAAudioSource* VocalTunerAudioProcessorEditor::currentSource() const
 }
 
 // 편집 가능(투명도 0%) 상태인 트랙들의 소스. 2개 이상이면 한 트랙의 편집이 모두에게 적용된다.
+// 기준 트랙과 따라가는 트랙은 서로 묶지 않는다: 맞추기 뒤에 따라가는 트랙을 고치면 기준(가이드)이 같이 움직이던 문제.
 std::vector<juce::ARAAudioSource*> VocalTunerAudioProcessorEditor::editableSources() const
 {
     std::vector<juce::ARAAudioSource*> sources;
@@ -157,8 +158,11 @@ std::vector<juce::ARAAudioSource*> VocalTunerAudioProcessorEditor::editableSourc
             sources.push_back(s);
     };
     add(currentSource());
+    auto& alignment = controller->getAlignment();
+    const auto* active = activeRegion();
+    const bool activeIsReference = active != nullptr && alignment.isReference(active);
     for (const auto* region : liveRegions)
-        if (controller->getAlignment().settings(region).view == TrackView::Editable)
+        if (alignment.settings(region).view == TrackView::Editable && alignment.isReference(region) == activeIsReference)
             add(AlignmentController::sourceOf(region));
     return sources;
 }
@@ -440,7 +444,7 @@ juce::String VocalTunerAudioProcessorEditor::rowDetail(const juce::ARAPlaybackRe
     const auto* controller = getDocumentController();
     if (controller == nullptr)
         return {};
-    const auto& alignment = controller->getAlignment();
+    auto& alignment = controller->getAlignment();
     juce::String text;
     if (const auto slot = alignment.referenceSlot(region); slot > 0)
         text = juce::String::fromUTF8(slot == 1 ? "네이비 기준" : "베이지 기준");

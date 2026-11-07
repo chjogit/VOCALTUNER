@@ -139,6 +139,9 @@ void AnalysisManager::storeResult(juce::ARAAudioSource* source, const std::share
     it->second.alignmentFailed = false;
     it->second.undoStack.clear();   // 재분석 결과가 편집을 대체함
     it->second.redoStack.clear();
+    it->second.fingerprint = { static_cast<double>(task->getSampleRate()), static_cast<int64_t>(task->getNumSamples()),
+                               it->second.features->size(), result.contentHash };
+    applyPendingRestore(it->second);
     lastElapsedSeconds = result.elapsedSeconds;
     lastAudioSeconds = result.audioSeconds;
 }

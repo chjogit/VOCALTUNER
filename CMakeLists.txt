@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(VocalTuner VERSION 1.1.11)
+project(VocalTuner VERSION 1.2.0)
 
 option(VOCALTUNER_BUILD_TESTS "Build unit tests" ON)
 # ON이면 JUCE 없이 vocaltuner_core + 테스트만 빌드 (Linux CI/검증용)
@@ -35,6 +35,9 @@ add_library(vocaltuner_core STATIC
     Source/Analysis/BlockTransforms.cpp
     Source/Analysis/PitchFlow.cpp
     Source/Analysis/BlockHistory.cpp
+    Source/Analysis/EditState.cpp
+    Source/Analysis/SpectralEnvelope.cpp
+    Source/Analysis/LpcFormants.cpp
     Source/Alignment/SpectralFrames.cpp
     Source/Alignment/SectionClassifier.cpp
     Source/Alignment/TimeWarp.cpp
@@ -43,15 +46,21 @@ add_library(vocaltuner_core STATIC
     Source/Alignment/GuidedMelody.cpp
     Source/Alignment/MixReference.cpp
     Source/Alignment/GuidedTiming.cpp
+    Source/Alignment/PhraseTiming.cpp
+    Source/Alignment/BandAlign.cpp
     Source/Alignment/WordAnchors.cpp
     Source/Render/EditTimeMap.cpp
     Source/Render/EditGrid.cpp
     Source/Render/EditRenderer.cpp
+    Source/Render/EditShiftCurves.cpp
     Source/Render/SpectralDiff.cpp
     Source/Render/Psola.cpp
     Source/Render/PsolaGrain.cpp
     Source/Render/PsolaWarp.cpp
-    Source/Render/ConsonantShield.cpp)
+    Source/Render/PsolaLevel.cpp
+    Source/Render/ConsonantShield.cpp
+    Source/Render/VowelWeight.cpp
+    Source/Render/VowelFeatures.cpp)
 target_include_directories(vocaltuner_core PUBLIC Source/Analysis Source/Alignment Source/Render)
 target_include_directories(vocaltuner_core PUBLIC Source/UI)
 target_link_libraries(vocaltuner_core PUBLIC world_harvest)
@@ -111,7 +120,8 @@ target_sources(VocalTuner
         Source/PlaybackPreview.cpp
         Source/PluginEditorPreview.cpp
         Source/Analysis/AnalysisTask.cpp
-        Source/Analysis/AnalysisManager.cpp)
+        Source/Analysis/AnalysisManager.cpp
+        Source/Analysis/AnalysisManagerState.cpp)
 
 # 한글 주석이 CP949로 해석되지 않도록 소스를 UTF-8로 컴파일
 if(MSVC)
@@ -175,12 +185,40 @@ if(VOCALTUNER_BUILD_TESTS)
     endif()
     add_test(NAME BlockHistoryTests COMMAND BlockHistoryTests)
 
+    add_executable(EditStateTests Tests/EditStateTests.cpp)
+    target_link_libraries(EditStateTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(EditStateTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME EditStateTests COMMAND EditStateTests)
+
     add_executable(RollViewportTests Tests/RollViewportTests.cpp)
     target_link_libraries(RollViewportTests PRIVATE vocaltuner_core)
     if(MSVC)
         target_compile_options(RollViewportTests PRIVATE /utf-8)
     endif()
     add_test(NAME RollViewportTests COMMAND RollViewportTests)
+
+    add_executable(PhraseMoveTests Tests/PhraseMoveTests.cpp)
+    target_link_libraries(PhraseMoveTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(PhraseMoveTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME PhraseMoveTests COMMAND PhraseMoveTests)
+
+    add_executable(BandAlignTests Tests/BandAlignTests.cpp)
+    target_link_libraries(BandAlignTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(BandAlignTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME BandAlignTests COMMAND BandAlignTests)
+
+    add_executable(PhraseTimingTests Tests/PhraseTimingTests.cpp)
+    target_link_libraries(PhraseTimingTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(PhraseTimingTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME PhraseTimingTests COMMAND PhraseTimingTests)
 
     add_executable(AlignmentTests Tests/AlignmentTests.cpp)
     target_link_libraries(AlignmentTests PRIVATE vocaltuner_core)
@@ -252,12 +290,109 @@ if(VOCALTUNER_BUILD_TESTS)
     endif()
     add_test(NAME ConsonantShieldTests COMMAND ConsonantShieldTests)
 
+    add_executable(VowelWeightTests Tests/VowelWeightTests.cpp)
+    target_link_libraries(VowelWeightTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(VowelWeightTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME VowelWeightTests COMMAND VowelWeightTests)
+
+    add_executable(VowelRenderTests Tests/VowelRenderTests.cpp)
+    target_link_libraries(VowelRenderTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(VowelRenderTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME VowelRenderTests COMMAND VowelRenderTests)
+
     add_executable(SpectralDiffTests Tests/SpectralDiffTests.cpp)
     target_link_libraries(SpectralDiffTests PRIVATE vocaltuner_core)
     if(MSVC)
         target_compile_options(SpectralDiffTests PRIVATE /utf-8)
     endif()
     add_test(NAME SpectralDiffTests COMMAND SpectralDiffTests)
+
+    add_executable(SpectralEnvelopeTests Tests/SpectralEnvelopeTests.cpp)
+    target_link_libraries(SpectralEnvelopeTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(SpectralEnvelopeTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME SpectralEnvelopeTests COMMAND SpectralEnvelopeTests)
+
+    add_executable(PsolaFormantTests Tests/PsolaFormantTests.cpp)
+    target_link_libraries(PsolaFormantTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(PsolaFormantTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME PsolaFormantTests COMMAND PsolaFormantTests)
+
+    add_executable(PsolaLevelTests Tests/PsolaLevelTests.cpp)
+    target_link_libraries(PsolaLevelTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(PsolaLevelTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME PsolaLevelTests COMMAND PsolaLevelTests)
+
+    add_executable(EditStateV1Tests Tests/EditStateV1Tests.cpp)
+    target_link_libraries(EditStateV1Tests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(EditStateV1Tests PRIVATE /utf-8)
+    endif()
+    add_test(NAME EditStateV1Tests COMMAND EditStateV1Tests)
+
+    add_executable(PsolaGoldenTests Tests/PsolaGoldenTests.cpp)
+    target_link_libraries(PsolaGoldenTests PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(PsolaGoldenTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME PsolaGoldenTests COMMAND PsolaGoldenTests)
+
+    # PSOLA 포먼트/음정/프리에코 측정 CLI (테스트 아님)
+    add_executable(vt_formant_measure Tools/formant_measure.cpp)
+    target_include_directories(vt_formant_measure PRIVATE Tools)
+    target_link_libraries(vt_formant_measure PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(vt_formant_measure PRIVATE /utf-8)
+    endif()
+
+    # 실제 목소리 PSOLA 측정 CLI (테스트 아님)
+    add_executable(vt_voice_compare Tools/voice_compare.cpp)
+    target_include_directories(vt_voice_compare PRIVATE Tools)
+    target_link_libraries(vt_voice_compare PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(vt_voice_compare PRIVATE /utf-8)
+    endif()
+
+    # 모음 중심 이동 측정 CLI (테스트 아님)
+    add_executable(vt_vowel_focus Tools/vowel_focus.cpp)
+    target_include_directories(vt_vowel_focus PRIVATE Tools)
+    target_link_libraries(vt_vowel_focus PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(vt_vowel_focus PRIVATE /utf-8)
+    endif()
+
+    # 문장 중간 진입 화음 박자 찾기 평가 CLI (테스트 아님)
+    add_executable(vt_phrase_timing_eval Tools/phrase_timing_eval.cpp)
+    target_include_directories(vt_phrase_timing_eval PRIVATE Tools)
+    target_link_libraries(vt_phrase_timing_eval PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(vt_phrase_timing_eval PRIVATE /utf-8)
+    endif()
+
+    # 대역 DTW 박자 맞추기 렌더 CLI (테스트 아님)
+    add_executable(vt_band_render Tools/band_render.cpp)
+    target_include_directories(vt_band_render PRIVATE Tools)
+    target_link_libraries(vt_band_render PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(vt_band_render PRIVATE /utf-8)
+    endif()
+
+    # 가이드 박자 찾기 진단 CLI (테스트 아님)
+    add_executable(vt_guided_timing_diag Tools/guided_timing_diag.cpp)
+    target_include_directories(vt_guided_timing_diag PRIVATE Tools)
+    target_link_libraries(vt_guided_timing_diag PRIVATE vocaltuner_core)
+    if(MSVC)
+        target_compile_options(vt_guided_timing_diag PRIVATE /utf-8)
+    endif()
 
     # 원본 vs 렌더 스펙트럼 차이 CLI (테스트 아님)
     add_executable(spectral_diff Tools/spectral_diff.cpp)

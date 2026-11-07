@@ -169,7 +169,10 @@ AlignmentController::AlignPlan AlignmentController::planFor(const juce::ARAPlayb
     {
         plan.referenceReader = std::make_shared<AnalysisTask>(*sourceOf(p.reference), false);
         plan.targetFeatures = analysis.getFeatures(sourceOf(target));
+        if (bandTiming && ! p.referenceIsMix)
+            plan.targetReader = std::make_shared<AnalysisTask>(*sourceOf(target), false);
     }
+    plan.bandTiming = bandTiming;
     return plan;
 }
 
@@ -191,8 +194,19 @@ AlignmentController::Computed AlignmentController::runPlan(AlignPlan& plan)
         GuidedTimingOptions timing;
         timing.shouldCancel = cancelled;
         out.timingFound = true;
-        out.result.targetToReference = guidedTimeMap(reader.getNumSamples(), reader.getSampleRate(), read, *plan.targetFeatures,
-                                                     plan.targetOffset, plan.referenceOffset, timing);
+        if (plan.bandTiming && ! plan.referenceIsMix && plan.targetReader != nullptr)
+        {
+            auto& targetReader = *plan.targetReader;
+            const StereoReader readTarget = [&targetReader](int64_t start, int count, float* l, float* r) { targetReader.readStereo(start, count, l, r); };
+            const auto referenceBands = computeBandFrames(read, reader.getNumSamples(), reader.getSampleRate(), 0.01, cancelled);
+            const auto targetBands = computeBandFrames(readTarget, targetReader.getNumSamples(), targetReader.getSampleRate(), 0.01, cancelled);
+            BandAlignOptions band;
+            band.shouldCancel = cancelled;
+            out.result.targetToReference = bandAlignMap(referenceBands, plan.referenceOffset, targetBands, plan.targetOffset, band);
+        }
+        else
+            out.result.targetToReference = guidedTimeMap(reader.getNumSamples(), reader.getSampleRate(), read, *plan.targetFeatures,
+                                                         plan.targetOffset, plan.referenceOffset, timing);
         if (plan.referenceIsMix)
             out.melody = std::make_shared<const MelodyTrack>(melodyForTarget(reader.getNumSamples(), reader.getSampleRate(), read, *plan.targetFeatures,
                                                                          plan.targetOffset, out.result.targetToReference, plan.referenceOffset, cancelled));
@@ -286,8 +300,14 @@ AlignmentController::Outcome AlignmentController::apply(const juce::ARAPlaybackR
     const auto& melody = cache[target].melody;
     const auto* melodyToUse = p.referenceIsMix ? (melody != nullptr ? melody.get() : &noMelody) : nullptr;
     const auto referenceCurve = p.referenceIsMix ? nullptr : analysis.getFeatures(sourceOf(p.reference));
-    const auto updates = fitToReference(*baseline, offsetOf(target), aligned->targetToReference, *referenceBlocks,
-                                        offsetOf(p.reference), settings(target).roles, melodyToUse, referenceCurve.get());
+    auto roles = settings(target).roles;
+    roles.rigidGaps = bandTiming && ! p.referenceIsMix;   // 대역 DTW 박자일 때만 (기존 박자 맞추기 결과는 그대로)
+    auto updates = fitToReference(*baseline, offsetOf(target), aligned->targetToReference, *referenceBlocks,
+                                  offsetOf(p.reference), roles, melodyToUse, referenceCurve.get());
+    // 대역 DTW 박자: 소리를 늘이지 않고 프레이즈를 통째로 옮긴다 (사용자 청취 선택 11/7)
+    if (roles.timing && bandTiming && ! p.referenceIsMix)
+        if (const auto targetFeatures = analysis.getFeatures(targetSource))
+            movePhrasesRigidly(updates, *baseline, *targetFeatures);
     if (beginGesture)
     {
         if (onBeforeApply)

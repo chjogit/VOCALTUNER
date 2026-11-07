@@ -14,9 +14,61 @@ size_t frameOf(const PsolaInput& in, double sample) noexcept
 
 double hann(long i, long n) noexcept { return n <= 1 ? 1.0 : 0.5 - 0.5 * std::cos(2.0 * pi * static_cast<double>(i) / static_cast<double>(n - 1)); }
 
-
-void addGrain(const PsolaInput& in, Synth& s, long mark, long centre, long half)
+double formantRatio(double amount, double shiftSemitones) noexcept
 {
+    return amount >= 1.0 ? 1.0 : std::pow(2.0, (1.0 - std::max(0.0, amount)) * shiftSemitones / 12.0);
+}
+
+long grainHalf(long period, double shiftSemitones, double ratio) noexcept
+{
+    if (ratio == 1.0 || shiftSemitones >= 0.0)
+        return period;
+    return std::max(period, std::lround(static_cast<double>(period) * std::pow(2.0, -shiftSemitones / 12.0)));
+}
+
+double formantAmountAt(const PsolaInput& in, size_t frame) noexcept
+{
+    return in.formantAmount == nullptr ? 1.0 : in.formantAmount[frame];
+}
+
+namespace
+{
+// Catmull-Rom 3차 보간 (x[i]는 i-1..i+2가 범위 안일 때만)
+double cubicAt(const float* x, long i, double frac) noexcept
+{
+    const double p0 = x[i - 1], p1 = x[i], p2 = x[i + 1], p3 = x[i + 2];
+    return p1 + 0.5 * frac * (p2 - p0 + frac * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3 + frac * (3.0 * (p1 - p2) + p3 - p0)));
+}
+
+// 읽을 원본 범위 [mark - reach, mark + reach]가 원본 안인지
+bool resampledSpanFits(const PsolaInput& in, long mark, long half, double ratio) noexcept
+{
+    const auto reach = static_cast<long>(std::ceil(static_cast<double>(half) * ratio)) + 2;
+    return mark - reach >= 1 && mark + reach < static_cast<long>(in.length) - 2;
+}
+
+// mark 둘레 2*half*ratio 길이 원본을 간격 ratio로 읽은 조각
+void addResampledGrain(const PsolaInput& in, Synth& s, long mark, long centre, long half, double ratio)
+{
+    for (long i = 0; i < 2 * half; ++i)
+    {
+        const auto at = centre - half + i - static_cast<long>(s.offset);
+        if (at < 0 || at >= static_cast<long>(s.out.size()))
+            continue;
+        const auto pos = static_cast<double>(mark) + static_cast<double>(i - half) * ratio;
+        const auto base = static_cast<long>(std::floor(pos));
+        const auto w = hann(i, 2 * half);
+        s.out[static_cast<size_t>(at)] += cubicAt(in.samples, base, pos - static_cast<double>(base)) * w;
+        s.weight[static_cast<size_t>(at)] += w;
+    }
+}
+} // namespace
+
+void addGrain(const PsolaInput& in, Synth& s, long mark, long centre, long half, double ratio)
+{
+    // 원본 밖으로 나가는 조각은 ratio 1 조각으로 대신하고, 그것도 안 되면 건너뛴다 (가장자리에서 조각이 사라지지 않게)
+    if (ratio != 1.0 && resampledSpanFits(in, mark, half, ratio))
+        return addResampledGrain(in, s, mark, centre, half, ratio);
     if (mark - half < 0 || mark + half >= static_cast<long>(in.length))
         return;
     for (long i = 0; i < 2 * half; ++i)

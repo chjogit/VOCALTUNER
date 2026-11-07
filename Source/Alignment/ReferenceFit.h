@@ -31,6 +31,9 @@ struct TrackRoles
     double smoothAmount = 0.5;      // 음정 이음 정도 (pitch 역할이 켜진 트랙의 transitionAfter)
     double maxShiftSemitones = defaultFitShiftSemitones;   // 이동 한도: 이보다 크게 옮겨야 하는 음은 그대로 둔다
     PitchRelation relation = PitchRelation::Unison;
+    // 박자 맞추기에서 자음 블록과 블록 사이 짧은 틈(0.25초 이하)의 길이를 그대로 두고, 늘임·줄임은 유성 블록이 맡는다.
+    // 틈에 든 자음·음절 시작을 늘이면 PSOLA가 어택을 번지게 한다. 기본 꺼짐 = 기존 결과 그대로 (BandAlign과 함께 켠다)
+    bool rigidGaps = false;
 };
 
 // 타깃 블록 목록을 레퍼런스에 맞춘 결과 (모든 블록, 인덱스 순서).
@@ -40,6 +43,12 @@ struct TrackRoles
 std::vector<BlockUpdate> fitToReference(const std::vector<VocalBlock>& baseline, double targetOffsetSec, const TimeMap& targetToReference,
                                         const std::vector<VocalBlock>& referenceBlocks, double referenceOffsetSec, const TrackRoles&,
                                         const MelodyTrack* melody = nullptr, const VocalFeatures* referenceCurve = nullptr);
+
+// 프레이즈 통째 이동 (사용자 청취 선택 11/7: 원본 소리를 늘이지 않는 쪽이 낫다).
+// 타깃을 거의 무음(무성, rms < 0.01, 앞뒤 소리에서 20 ms 넘게 떨어짐)이 60 ms 넘게 있는 틈에서 프레이즈로 나누고,
+// 프레이즈마다 맞춘 시작 이동량의 중앙값만큼 모든 블록을 같이 옮긴다. 음정 등 다른 편집 값은 updates 그대로.
+// 앞 프레이즈와 겹치면 겹치지 않을 만큼만 늦춘다. updates는 fitToReference 결과(모든 블록, 인덱스 순서)
+void movePhrasesRigidly(std::vector<BlockUpdate>& updates, const std::vector<VocalBlock>& baseline, const VocalFeatures& target);
 
 // 개별 단계 (테스트/재사용)
 VocalBlock withTimingFitted(const VocalBlock&, double targetOffsetSec, const TimeMap&, double amount);

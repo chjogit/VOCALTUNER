@@ -85,6 +85,48 @@ void repairOrder(std::vector<VocalBlock>& blocks)
             b.endOffsetSec = b.displayStartSec() + minBlockSeconds - b.endSec;
     }
 }
+// 자음 블록은 길이를 그대로, 짧은 틈은 원래 길이로: 앞 유성 블록의 끝을 옮겨 맞춘다 (앞이 자음이면 뒤 블록의 시작을 옮긴다)
+void keepGapsRigid(std::vector<VocalBlock>& fitted, const std::vector<VocalBlock>& baseline)
+{
+    constexpr double shortGapSec = 0.25;
+    const auto setEnd = [](VocalBlock& b, double end) { b.endOffsetSec = end - b.endSec; };
+    const auto setStart = [](VocalBlock& b, double start) { b.startOffsetSec = start - b.startSec; };
+    // 자음과 아주 짧은 유성 블록(늘일 모음이 거의 없다: 어택·클릭이 대부분)은 길이를 그대로 두고 옮기기만 한다
+    constexpr double shortVoicedSec = 0.1;
+    const auto rigid = [&](size_t i) { return baseline[i].isConsonant || baseline[i].displayEndSec() - baseline[i].displayStartSec() < shortVoicedSec; };
+    // 통째로 옮길 때는 맞춘 시작·끝의 가운데를 지킨다 (시작에 붙이면 끝쪽 차이가 모두 다음 블록으로 몰려 그 블록이 크게 늘거나 준다)
+    for (size_t i = 0; i < fitted.size(); ++i)
+        if (rigid(i))
+        {
+            const auto length = baseline[i].displayEndSec() - baseline[i].displayStartSec();
+            const auto centre = 0.5 * (fitted[i].displayStartSec() + fitted[i].displayEndSec());
+            setStart(fitted[i], centre - 0.5 * length);
+            setEnd(fitted[i], centre + 0.5 * length);
+        }
+    for (size_t i = 0; i + 1 < fitted.size(); ++i)
+    {
+        const auto gap = baseline[i + 1].displayStartSec() - baseline[i].displayEndSec();
+        if (gap < 0.0 || gap > shortGapSec)
+            continue;
+        auto& a = fitted[i];
+        auto& b = fitted[i + 1];
+        // 맡는 유성 블록은 원래 길이의 0.8~1.25배 안에서만 (그 밖이면 틈이 조금 늘거나 준다)
+        constexpr double shortest = 0.8, longest = 1.25;
+        if (! rigid(i))
+        {
+            const auto length = baseline[i].displayEndSec() - baseline[i].displayStartSec();
+            const auto lo = a.displayStartSec() + std::max(minBlockSeconds, shortest * length), hi = a.displayStartSec() + longest * length;
+            setEnd(a, std::clamp(b.displayStartSec() - gap, lo, std::max(lo, hi)));
+        }
+        else if (! rigid(i + 1))
+        {
+            const auto length = baseline[i + 1].displayEndSec() - baseline[i + 1].displayStartSec();
+            const auto lo = b.displayEndSec() - longest * length, hi = b.displayEndSec() - std::max(minBlockSeconds, shortest * length);
+            setStart(b, std::clamp(a.displayEndSec() + gap, std::min(lo, hi), hi));
+        }
+    }
+}
+
 // 레퍼런스에서 이 블롭에 해당하는 구간 (원래 위치를 대응시킨 시각)
 std::pair<double, double> referenceSpan(const VocalBlock& b, double targetOffset, const TimeMap& map)
 {
@@ -187,6 +229,50 @@ bool isRunPassingNote(const std::vector<VocalBlock>& blocks, size_t index)
     return isShortVoiced(blocks[index]) && touchingVoiced(blocks, index, -1) && touchingVoiced(blocks, index, +1);
 }
 
+void movePhrasesRigidly(std::vector<BlockUpdate>& updates, const std::vector<VocalBlock>& baseline, const VocalFeatures& target)
+{
+    if (updates.size() != baseline.size() || target.size() == 0)
+        return;
+    const auto period = target.framePeriodMs / 1000.0;
+    constexpr double silentRms = 0.01;
+    constexpr size_t guard = 4, minSilentFrames = 12;
+    const auto silentFrames = [&](double from, double to) {
+        size_t count = 0;
+        const auto first = static_cast<size_t>(std::max(0.0, from / period));
+        const auto last = std::min(target.size(), static_cast<size_t>(std::max(0.0, to / period)));
+        for (auto j = first; j < last; ++j)
+        {
+            bool quiet = true;
+            for (auto k = j >= guard ? j - guard : 0; k <= std::min(target.size() - 1, j + guard) && quiet; ++k)
+                quiet = target.midiF0[k] <= 0.0 && target.rms[k] < silentRms;
+            count += quiet ? 1 : 0;
+        }
+        return count;
+    };
+    for (size_t a = 0; a < baseline.size();)
+    {
+        auto b = a + 1;
+        while (b < baseline.size() && silentFrames(baseline[b - 1].endSec, baseline[b].startSec) < minSilentFrames) ++b;
+        std::vector<double> moves;
+        for (auto i = a; i < b; ++i) moves.push_back(updates[i].block.displayStartSec() - baseline[i].displayStartSec());
+        std::nth_element(moves.begin(), moves.begin() + static_cast<long>(moves.size() / 2), moves.end());
+        const auto move = moves[moves.size() / 2];
+        for (auto i = a; i < b; ++i)
+        {
+            updates[i].block.startOffsetSec = baseline[i].startOffsetSec + move;
+            updates[i].block.endOffsetSec = baseline[i].endOffsetSec + move;
+        }
+        a = b;
+    }
+    for (size_t i = 1; i < updates.size(); ++i)
+        if (updates[i].block.displayStartSec() < updates[i - 1].block.displayEndSec())
+        {
+            const auto push = updates[i - 1].block.displayEndSec() - updates[i].block.displayStartSec();
+            updates[i].block.startOffsetSec += push;
+            updates[i].block.endOffsetSec += push;
+        }
+}
+
 std::vector<BlockUpdate> fitToReference(const std::vector<VocalBlock>& baseline, double targetOffset, const TimeMap& map,
                                         const std::vector<VocalBlock>& referenceBlocks, double referenceOffset, const TrackRoles& roles,
                                         const MelodyTrack* melody, const VocalFeatures* referenceCurve)
@@ -196,6 +282,8 @@ std::vector<BlockUpdate> fitToReference(const std::vector<VocalBlock>& baseline,
     {
         for (auto& block : fitted)
             block = withTimingFitted(block, targetOffset, map, roles.timingAmount);
+        if (roles.rigidGaps)
+            keepGapsRigid(fitted, baseline);
         repairOrder(fitted);
     }
 

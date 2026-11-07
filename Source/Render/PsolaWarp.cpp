@@ -1,5 +1,6 @@
 #include "PsolaWarp.h"
 #include "PsolaGrain.h"
+#include "PsolaLevel.h"
 #include <algorithm>
 #include <cmath>
 
@@ -16,6 +17,15 @@ constexpr double maxGapHz = 50.0;                // 마크 간격이 이 주파�
 PsolaInput sourceView(const WarpInput& in)
 {
     return { in.samples, in.length, in.sampleRate, in.framePeriodSec, in.sourceMidi, nullptr, in.sourceFrames };
+}
+
+// 출력 시각의 포먼트 양 (이동량과 같은 출력 프레임 격자)
+double formantAtOutput(const WarpInput& in, double outSample)
+{
+    if (in.formantAmount == nullptr || in.outFrames == 0)
+        return 1.0;
+    const auto k = static_cast<size_t>(std::max(0.0, outSample / in.sampleRate / in.framePeriodSec));
+    return in.formantAmount[std::min(k, in.outFrames - 1)];
 }
 
 double sourceSample(const WarpInput& in, double outSample) { return in.toSource(outSample / in.sampleRate) * in.sampleRate; }
@@ -78,10 +88,31 @@ struct Warper
         return (sourceSample(in, outSample + probe) - sourceSample(in, outSample)) / probe;
     }
 
-    // 다음 조각 자리: 박자 그대로 + 이동 0이면 원본 마크가 놓일 출력 자리로 끌어당긴다 (원본과 위상이 맞게)
+    // 그대로 옮기는(기울기 1) 곳까지 남은 거리로 본 가까움 0..1 (boundarySec 안, 앞뒤 모두). 렌더러는 그런 곳을 원본 복사로 바꾸므로,
+    // 그 경계 둘레의 조각을 원본 마크 자리에 맞춰 두어야 PSOLA와 복사가 위상이 맞게 이어진다 (어긋나면 틱·더블링)
+    double rigidNearness(double t) const
+    {
+        constexpr double boundarySec = 0.025, rigidSlope = 0.003;
+        const auto step = 0.001 * in.sampleRate;
+        const auto steps = static_cast<int>(boundarySec * 1000.0);
+        for (int d = 0; d <= steps; ++d)
+            for (const auto sign : { 1.0, -1.0 })
+            {
+                const auto at = t + sign * d * step;
+                if (std::abs(slopeAt(at) - 1.0) < rigidSlope && std::abs(shiftAtOutput(in, at)) < lockBelow)
+                    return 1.0 - static_cast<double>(d) / static_cast<double>(steps + 1);
+            }
+        return 0.0;
+    }
+
+    // 다음 조각 자리: 박자 그대로 + 이동 0이면 원본 마크가 놓일 출력 자리로 끌어당긴다 (원본과 위상이 맞게).
+    // 그대로 옮기는 곳에 가까워질수록 더 세게 끌어당긴다
     double lockedNext(double next, double shift, double slope) const
     {
-        const auto lock = (1.0 - std::min(1.0, std::abs(shift) / lockBelow)) * (1.0 - std::min(1.0, std::abs(slope - 1.0) / slopeLockBelow));
+        const auto steady = (1.0 - std::min(1.0, std::abs(shift) / lockBelow)) * (1.0 - std::min(1.0, std::abs(slope - 1.0) / slopeLockBelow));
+        // 많이 늘이거나 줄이는 곳(10% 넘게)에서 세게 끌어당기면 조각 간격이 뒤틀려 소리가 꺼진다: 그런 곳은 경계의 섞기에 맡긴다
+        const auto near = std::abs(shift) < lockBelow && std::abs(slope - 1.0) < 0.1 ? rigidNearness(next) : 0.0;
+        const auto lock = std::max(steady, near);
         if (lock <= 0.0 || marks.empty())
             return next;
         const auto k = static_cast<size_t>(nearestMark(marks, sourceSample(in, next)));
@@ -91,12 +122,26 @@ struct Warper
 
     void voicedGrain(double& t)
     {
-        const auto k = static_cast<size_t>(nearestMark(marks, sourceSample(in, t)));
-        const auto period = periodOf(k);
-        addGrain(source, synth, marks[k], std::lround(t), period);
+        const auto at = sourceSample(in, t);
+        const auto k = static_cast<size_t>(nearestMark(marks, at));
+        // 다음 조각까지의 간격은 원본에서 지금 읽는 자리의 주기 (양옆 마크 주기 사이를 보간).
+        // 가까운 마크의 주기를 그대로 쓰면 늘인 곳에서 같은 주기가 되풀이되다 다음 마크에서 한 번에 바뀌어 음정이 계단처럼 들린다
+        auto period = static_cast<double>(periodOf(k));
+        {
+            const auto lo = static_cast<long>(at) >= marks[k] ? k : (k > 0 ? k - 1 : k);
+            const auto hi = std::min(lo + 1, marks.size() - 1);
+            const auto span = static_cast<double>(marks[hi] - marks[lo]);
+            if (hi != lo && span > 0.0 && span <= in.sampleRate / maxGapHz)
+            {
+                const auto x = std::clamp((at - static_cast<double>(marks[lo])) / span, 0.0, 1.0);
+                period = static_cast<double>(periodOf(lo)) + (static_cast<double>(periodOf(hi)) - static_cast<double>(periodOf(lo))) * x;
+            }
+        }
         const auto shift = shiftAtOutput(in, t);
-        const auto next = t + static_cast<double>(period) / std::pow(2.0, shift / 12.0);
-        t = std::max(lockedNext(next, shift, slopeAt(t)), t + 0.5 * static_cast<double>(period));
+        const auto ratio = formantRatio(formantAtOutput(in, t), shift);
+        addGrain(source, synth, marks[k], std::lround(t), grainHalf(periodOf(k), shift, ratio), ratio);
+        const auto next = t + period / std::pow(2.0, shift / 12.0);
+        t = std::max(lockedNext(next, shift, slopeAt(t)), t + 0.5 * period);
     }
 
     void unvoicedGrain(double& t, long hop)
@@ -105,25 +150,50 @@ struct Warper
         t += static_cast<double>(hop);
     }
 };
+// 원본을 출력 시각에 맞춰 (toSource, 선형 보간) 늘어놓은 것: 음량 비교의 기준
+std::vector<float> sourceOnOutputTimeline(const WarpInput& in, size_t a, size_t n)
+{
+    std::vector<float> ref(n);
+    const auto last = static_cast<double>(in.length - 1);
+    for (size_t j = 0; j < n; ++j)
+    {
+        const auto pos = std::clamp(sourceSample(in, static_cast<double>(a + j)), 0.0, last);
+        const auto i = static_cast<size_t>(pos), i2 = std::min(i + 1, in.length - 1);
+        const auto f = pos - static_cast<double>(i);
+        ref[j] = static_cast<float>(in.samples[i] * (1.0 - f) + in.samples[i2] * f);
+    }
+    return ref;
+}
+
+// 이동이 있는 유성 구간 중 합성이 덮은 곳에서만 음량을 원본에 맞춘다. y[0]은 출력 표본 a
+void matchWarpedLevel(const WarpInput& in, size_t a, std::vector<float>& y, const std::vector<double>& synthWeight)
+{
+    std::vector<double> mask(y.size(), 0.0);
+    for (size_t j = 0; j < y.size(); ++j)
+    {
+        const auto t = static_cast<double>(a + j);
+        mask[j] = voicedAtOutput(in, t) && std::abs(shiftAtOutput(in, t)) > 0.01 ? 1.0 : 0.0;
+    }
+    applyLevelMatch(y, sourceOnOutputTimeline(in, a, y.size()), maskWeight(coveredMask(mask, synthWeight), in.sampleRate), in.sampleRate, a);
+}
 } // namespace
 
-std::vector<float> psolaWarp(const WarpInput& in, size_t outBegin, size_t outEnd)
+namespace
 {
-    if (outBegin >= outEnd || in.length == 0)
-        return std::vector<float>(outEnd > outBegin ? outEnd - outBegin : 0, 0.0f);
-    const auto [a, b] = outputExpandedToQuiet(in, outBegin, outEnd);
-    Warper w { in, sourceView(in), {}, {} };
+// 합성에 쓸 원본 마크 (출력 [a, b)가 가져오는 원본 둘레, 무성 틈까지 넓혀)
+std::vector<long> marksFor(const WarpInput& in, const Warper& w, size_t a, size_t b)
+{
     const auto margin = marginSec * in.sampleRate;
     const auto lo = std::max(0.0, sourceSample(in, static_cast<double>(a)) - margin);
     const auto hi = std::min(static_cast<double>(in.length), sourceSample(in, static_cast<double>(b)) + margin);
-    if (in.sourceFrames > 0 && hi > lo)
-    {
-        const auto [sa, sb] = expandedToQuiet(w.source, static_cast<size_t>(lo), static_cast<size_t>(hi));
-        w.marks = pitchMarks(w.source, sa, sb);
-    }
-    w.synth.offset = a;
-    w.synth.out.assign(b - a, 0.0);
-    w.synth.weight.assign(b - a, 0.0);
+    if (in.sourceFrames == 0 || hi <= lo)
+        return {};
+    const auto [sa, sb] = expandedToQuiet(w.source, static_cast<size_t>(lo), static_cast<size_t>(hi));
+    return pitchMarks(w.source, sa, sb);
+}
+
+void synthesizeOutput(const WarpInput& in, Warper& w, size_t a, size_t b)
+{
     const auto hop = unvoicedHop(in);
     for (double t = static_cast<double>(a); t < static_cast<double>(b);)
     {
@@ -135,11 +205,24 @@ std::vector<float> psolaWarp(const WarpInput& in, size_t outBegin, size_t outEnd
             w.unvoicedGrain(t, hop);
         }
     }
-    std::vector<float> y(outEnd - outBegin);
+}
+} // namespace
+
+std::vector<float> psolaWarp(const WarpInput& in, size_t outBegin, size_t outEnd)
+{
+    if (outBegin >= outEnd || in.length == 0)
+        return std::vector<float>(outEnd > outBegin ? outEnd - outBegin : 0, 0.0f);
+    const auto [a, b] = outputExpandedToQuiet(in, outBegin, outEnd);
+    Warper w { in, sourceView(in), {}, {} };
+    w.marks = marksFor(in, w, a, b);
+    w.synth.offset = a;
+    w.synth.out.assign(b - a, 0.0);
+    w.synth.weight.assign(b - a, 0.0);
+    synthesizeOutput(in, w, a, b);
+    std::vector<float> y(b - a);
     for (size_t i = 0; i < y.size(); ++i)
-    {
-        const auto at = outBegin + i - a;
-        y[i] = w.synth.weight[at] > 1e-3 ? static_cast<float>(w.synth.out[at] / w.synth.weight[at]) : 0.0f;
-    }
-    return y;
+        y[i] = w.synth.weight[i] > 1e-3 ? static_cast<float>(w.synth.out[i] / w.synth.weight[i]) : 0.0f;
+    if (in.levelMatch)
+        matchWarpedLevel(in, a, y, w.synth.weight);
+    return std::vector<float>(y.begin() + static_cast<long>(outBegin - a), y.begin() + static_cast<long>(outEnd - a));
 }

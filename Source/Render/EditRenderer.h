@@ -23,6 +23,8 @@ struct RenderOptions
     ParallelFor parallelFor;                    // 합성 구간을 병렬로
     std::function<bool()> shouldCancel;
     double chunkSeconds = 10.0;                 // 합성 구간 길이
+    bool levelMatch = false;                    // 옮긴 구간의 음량을 원본에 맞춘다 (PSOLA 에너지 손실 보정, 기본 꺼짐)
+    bool vowelFocus = true;                     // 숨소리·비음·자음 같은 모음 아닌 유성 프레임의 이동을 줄인다 (기본 켬, 사용자 청취 승인 11/6)
     double unchangedSemitones = 0.05;           // 이 이하의 음정 변화는 원본을 그대로 쓴다 (5센트, 들리지 않음)
 };
 

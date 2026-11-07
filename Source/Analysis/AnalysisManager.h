@@ -10,6 +10,7 @@
 #include "BlockEditing.h"
 #include "BlockHistory.h"
 #include "BlockTransforms.h"
+#include "EditState.h"
 
 struct AnalysisSummary
 {
@@ -67,6 +68,12 @@ public:
     BlockSnapshot getOriginalBlocks(juce::ARAAudioSource*) const;
     std::vector<BlockSnapshot> getUndoSnapshots(juce::ARAAudioSource*) const;
 
+    // --- 프로젝트 저장/복원 (메시지 스레드). 분석 전/후 어느 쪽에서 불러도 된다.
+    // 복원할 상태를 맡긴다. 분석이 이미 끝났으면 바로 적용하고, 아니면 분석 결과가 나올 때 적용한다.
+    void setRestoredState(juce::ARAAudioSource*, std::vector<uint8_t>);
+    // 저장할 상태. 블록이 있으면 현재 블록, 없고 복원 대기 중이면 그대로 돌려준다 (분석 전에 다시 저장해도 편집이 남게). 없으면 nullopt
+    std::optional<std::vector<uint8_t>> getSavedState(juce::ARAAudioSource*) const;
+
 private:
     struct Entry
     {
@@ -80,9 +87,12 @@ private:
         double elapsedSeconds = 0.0;
         double audioSeconds = 0.0;
         std::vector<std::shared_ptr<const std::vector<VocalBlock>>> undoStack, redoStack;
+        std::vector<uint8_t> pendingRestore;   // 아직 적용 못 한 저장 상태 (분석 결과 대기)
+        EditFingerprint fingerprint;           // 분석 결과가 나온 오디오의 지문 (features가 있을 때만 유효)
     };
 
     static void pushUndo(Entry&);
+    static void applyPendingRestore(Entry&);   // entriesMutex를 잡은 상태에서 호출
 
     void didEnableAudioSourceSamplesAccess(juce::ARAAudioSource*, bool enable) override;
     void willEnableAudioSourceSamplesAccess(juce::ARAAudioSource*, bool enable) override;

@@ -1,5 +1,6 @@
 #include "Psola.h"
 #include "PsolaGrain.h"
+#include "PsolaLevel.h"
 #include <algorithm>
 #include <cmath>
 
@@ -92,8 +93,10 @@ void synthesizeRun(const PsolaInput& in, const std::vector<long>& ms, Synth& s)
     {
         const auto k = static_cast<size_t>(nearestMark(ms, t));
         const auto period = std::max(20.0, 0.5 * static_cast<double>(ms[std::min(k + 1, ms.size() - 1)] - ms[k > 0 ? k - 1 : 0]));
-        addGrain(in, s, ms[k], static_cast<long>(std::lround(t)), static_cast<long>(period));
-        const auto shift = in.shiftSemitones[frameOf(in, t)];
+        const auto frame = frameOf(in, t);
+        const auto shift = in.shiftSemitones[frame];
+        const auto ratio = formantRatio(formantAmountAt(in, frame), shift);
+        addGrain(in, s, ms[k], static_cast<long>(std::lround(t)), grainHalf(static_cast<long>(period), shift, ratio), ratio);
         auto next = t + period / std::pow(2.0, shift / 12.0);
         if (const auto lock = 1.0 - std::min(1.0, std::abs(shift) / lockBelow); lock > 0.0)
             next += lock * 0.5 * (static_cast<double>(ms[static_cast<size_t>(nearestMark(ms, next))]) - next);
@@ -190,18 +193,12 @@ std::vector<float> psolaShift(const PsolaInput& in, size_t beginSample, size_t e
     return psolaShiftExact(in, beginSample, endSample);
 }
 
-std::vector<float> psolaShiftExact(const PsolaInput& in, size_t beginSample, size_t endSample)
+namespace
 {
-    endSample = std::min(endSample, in.length);
-    std::vector<float> y(in.samples + beginSample, in.samples + std::max(beginSample, endSample));
-    if (beginSample >= endSample || in.frames == 0)
-        return y;
+// 유성 구간마다 합성하고, 합성한 곳을 mask에 1로 표시 (mask[0]은 표본 beginSample)
+void synthesizeRuns(const PsolaInput& in, size_t beginSample, size_t endSample, Synth& s, std::vector<double>& mask)
+{
     const auto marks = pitchMarks(in, beginSample, endSample);
-    Synth s;
-    s.offset = beginSample;
-    s.out.assign(y.size(), 0.0);
-    s.weight.assign(y.size(), 0.0);
-    std::vector<double> mask(y.size(), 0.0);
     const auto toSample = [&](size_t frame) { return static_cast<long>(static_cast<double>(frame) * in.framePeriodSec * in.sampleRate); };
     for (const auto& [fa, fb] : activeRuns(in, frameOf(in, static_cast<double>(beginSample)), frameOf(in, static_cast<double>(endSample)) + 1))
     {
@@ -214,9 +211,37 @@ std::vector<float> psolaShiftExact(const PsolaInput& in, size_t beginSample, siz
         for (auto i = ms.front(); i < ms.back(); ++i)
             mask[static_cast<size_t>(i) - beginSample] = 1.0;
     }
-    const auto w = mixWeight(in, mask, beginSample);
+}
+
+// 합성을 원본에 섞는다. 반환값은 실제로 섞인 표본의 weight (그 밖은 0): 음량 보정도 같은 조건을 쓴다
+std::vector<double> mixSynthesis(std::vector<float>& y, const Synth& s, std::vector<double> w)
+{
     for (size_t i = 0; i < y.size(); ++i)
-        if (w[i] > 0.0 && s.weight[i] > 1e-3)
+    {
+        const auto mixed = w[i] > 0.0 && s.weight[i] > 1e-3;
+        w[i] = mixed ? w[i] : 0.0;
+        if (mixed)
             y[i] = static_cast<float>((1.0 - w[i]) * y[i] + w[i] * s.out[i] / s.weight[i]);
+    }
+    return w;
+}
+} // namespace
+
+std::vector<float> psolaShiftExact(const PsolaInput& in, size_t beginSample, size_t endSample)
+{
+    endSample = std::min(endSample, in.length);
+    std::vector<float> y(in.samples + beginSample, in.samples + std::max(beginSample, endSample));
+    if (beginSample >= endSample || in.frames == 0)
+        return y;
+    Synth s;
+    s.offset = beginSample;
+    s.out.assign(y.size(), 0.0);
+    s.weight.assign(y.size(), 0.0);
+    std::vector<double> mask(y.size(), 0.0);
+    synthesizeRuns(in, beginSample, endSample, s, mask);
+    const auto w = mixSynthesis(y, s, mixWeight(in, mask, beginSample));
+    if (in.levelMatch)
+        applyLevelMatch(y, std::vector<float>(in.samples + beginSample, in.samples + endSample), w, in.sampleRate, beginSample);
     return y;
 }
+

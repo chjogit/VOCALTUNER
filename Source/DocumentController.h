@@ -30,7 +30,7 @@ protected:
     juce::ARAAudioSource* doCreateAudioSource(juce::ARADocument*, ARA::ARAAudioSourceHostRef) override;
     juce::ARAPlaybackRenderer* doCreatePlaybackRenderer() noexcept override;
 
-    // 분석 결과 직렬화 전까지는 저장할 상태 없음 (프로젝트를 열 때마다 재분석)
+    // 저장/복원: 오디오 소스별 블록 목록(구조 + 편집). 분석은 열 때마다 다시 하고, 복원된 편집은 그 결과 위에 얹는다.
     bool doRestoreObjectsFromStream(juce::ARAInputStream&, const juce::ARARestoreObjectsFilter*) override;
     bool doStoreObjectsToStream(juce::ARAOutputStream&, const juce::ARAStoreObjectsFilter*) override;
 

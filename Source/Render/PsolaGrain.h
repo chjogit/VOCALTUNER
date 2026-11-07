@@ -17,7 +17,21 @@ double hann(long i, long n) noexcept;
 
 struct Synth { std::vector<double> out, weight; size_t offset = 0; };
 // samples[mark - half, mark + half)을 Hann 창으로 centre 둘레에 더한다
-void addGrain(const PsolaInput&, Synth&, long mark, long centre, long half);
+// ratio != 1이면 원본을 ratio배 빠르게(간격 ratio) 읽어 같은 길이 조각으로 만든다 (포먼트가 ratio배). 1은 기존 경로 그대로
+void addGrain(const PsolaInput&, Synth&, long mark, long centre, long half, double ratio = 1.0);
+// 포먼트를 원본 자리에 두는 정도(amount)와 이동(반음)에서 조각 읽기 배율. amount >= 1이면 정확히 1
+double formantRatio(double amount, double shiftSemitones) noexcept;
+// 조각 반폭. 포먼트를 옮기는 하향 이동(ratio != 1, shift < 0)에서는 조각이 간격(period / 2^(shift/12))의 두 배 이상이어야
+// 이웃 조각이 겹쳐 창 가중치가 0으로 떨어지지 않는다. 그 외는 period 그대로 (기본 경로 유지)
+// 알려진 한계 (기본 출력을 그대로 두려고 바꾸지 않았다):
+//  - amount = 1(ratio == 1)에서는 조각이 항상 period 반폭이라, 약 -7 반음보다 낮게 내리면 간격(period / 2^(shift/12))이
+//    조각 길이(2 * period)를 넘어 이웃 조각이 겹치지 않는다. 겹치지 않으면 가중치로 나눠 원본 파형이 거의 그대로 나와
+//    음정이 내려가지 않는다 (-12 반음은 원본에 가까운 음정을 돌려준다).
+//  - 조각 넓힘은 ratio != 1에서만 일어나므로 amount가 1보다 아주 조금만 작아져도 넓은 조각 경로로 갑자기 바뀐다
+//    (연속적이지 않다). 아직 이 값을 1 근처로 두는 UI는 없다.
+long grainHalf(long period, double shiftSemitones, double ratio) noexcept;
+// 프레임 f의 포먼트 양 (formantAmount == nullptr이면 1)
+double formantAmountAt(const PsolaInput&, size_t frame) noexcept;
 long nearestMark(const std::vector<long>& marks, double t) noexcept;
 // [begin, end)을 앞뒤 무성 틈(합성 구간 넓힘보다 긴)까지 넓힌다. 어느 구간을 렌더하든 마크와 합성이 같아야
 // 구간을 이어 붙이는 곳(겹쳐 섞는 곳)에서 두 결과의 위상이 어긋나지 않는다
