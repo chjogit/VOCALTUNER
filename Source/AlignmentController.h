@@ -42,7 +42,7 @@ public:
     int referenceSlot(const juce::ARAPlaybackRegion*) const;        // 0 = 기준 아님
     bool isReference(const juce::ARAPlaybackRegion* r) const { return referenceSlot(r) > 0; }
     bool hasReference() const noexcept { return ! referenceSlots.empty(); }
-    // 분리 보컬 기준의 박자를 대역 에너지 DTW로 찾는다 (BandAlign). 기본 꺼짐 = 기존 GuidedTiming 그대로
+    // 분리 보컬 기준의 박자를 대역 에너지 DTW로 찾고 프레이즈를 통째로 옮긴다 (BandAlign + movePhrasesRigidly). 기본 켬 (11/7)
     void setBandTiming(bool on) { bandTiming = on; cache.clear(); }
     bool usesBandTiming() const noexcept { return bandTiming; }
     void setReferenceSlot(const juce::ARAPlaybackRegion*, int slot); // 그 클립의 트랙 전체. 0 = 해제, 같은 색을 쓰던 트랙은 해제된다
@@ -143,7 +143,7 @@ private:
 
     AnalysisManager& analysis;
     std::map<TrackKey, int> referenceSlots;
-    bool bandTiming = false;
+    bool bandTiming = true;   // 사용자 청취 선택 11/7: 반주 없는 기준은 대역 정렬 + 프레이즈 통째 이동
     std::vector<const juce::ARAPlaybackRegion*> live;
     std::map<TrackKey, TrackSettings> tracks;
     std::map<const juce::ARAPlaybackRegion*, std::shared_ptr<const std::vector<VocalBlock>>> baselines;  // 마지막 맞추기 직전 블록 (정도 슬라이더의 기준)
