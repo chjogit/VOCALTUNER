@@ -94,9 +94,15 @@ void keepGapsRigid(std::vector<VocalBlock>& fitted, const std::vector<VocalBlock
     // 자음과 아주 짧은 유성 블록(늘일 모음이 거의 없다: 어택·클릭이 대부분)은 길이를 그대로 두고 옮기기만 한다
     constexpr double shortVoicedSec = 0.1;
     const auto rigid = [&](size_t i) { return baseline[i].isConsonant || baseline[i].displayEndSec() - baseline[i].displayStartSec() < shortVoicedSec; };
+    // 통째로 옮길 때는 맞춘 시작·끝의 가운데를 지킨다 (시작에 붙이면 끝쪽 차이가 모두 다음 블록으로 몰려 그 블록이 크게 늘거나 준다)
     for (size_t i = 0; i < fitted.size(); ++i)
         if (rigid(i))
-            setEnd(fitted[i], fitted[i].displayStartSec() + (baseline[i].displayEndSec() - baseline[i].displayStartSec()));
+        {
+            const auto length = baseline[i].displayEndSec() - baseline[i].displayStartSec();
+            const auto centre = 0.5 * (fitted[i].displayStartSec() + fitted[i].displayEndSec());
+            setStart(fitted[i], centre - 0.5 * length);
+            setEnd(fitted[i], centre + 0.5 * length);
+        }
     for (size_t i = 0; i + 1 < fitted.size(); ++i)
     {
         const auto gap = baseline[i + 1].displayStartSec() - baseline[i].displayEndSec();

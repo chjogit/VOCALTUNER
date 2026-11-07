@@ -88,10 +88,31 @@ struct Warper
         return (sourceSample(in, outSample + probe) - sourceSample(in, outSample)) / probe;
     }
 
-    // 다음 조각 자리: 박자 그대로 + 이동 0이면 원본 마크가 놓일 출력 자리로 끌어당긴다 (원본과 위상이 맞게)
+    // 그대로 옮기는(기울기 1) 곳까지 남은 거리로 본 가까움 0..1 (boundarySec 안, 앞뒤 모두). 렌더러는 그런 곳을 원본 복사로 바꾸므로,
+    // 그 경계 둘레의 조각을 원본 마크 자리에 맞춰 두어야 PSOLA와 복사가 위상이 맞게 이어진다 (어긋나면 틱·더블링)
+    double rigidNearness(double t) const
+    {
+        constexpr double boundarySec = 0.025, rigidSlope = 0.003;
+        const auto step = 0.001 * in.sampleRate;
+        const auto steps = static_cast<int>(boundarySec * 1000.0);
+        for (int d = 0; d <= steps; ++d)
+            for (const auto sign : { 1.0, -1.0 })
+            {
+                const auto at = t + sign * d * step;
+                if (std::abs(slopeAt(at) - 1.0) < rigidSlope && std::abs(shiftAtOutput(in, at)) < lockBelow)
+                    return 1.0 - static_cast<double>(d) / static_cast<double>(steps + 1);
+            }
+        return 0.0;
+    }
+
+    // 다음 조각 자리: 박자 그대로 + 이동 0이면 원본 마크가 놓일 출력 자리로 끌어당긴다 (원본과 위상이 맞게).
+    // 그대로 옮기는 곳에 가까워질수록 더 세게 끌어당긴다
     double lockedNext(double next, double shift, double slope) const
     {
-        const auto lock = (1.0 - std::min(1.0, std::abs(shift) / lockBelow)) * (1.0 - std::min(1.0, std::abs(slope - 1.0) / slopeLockBelow));
+        const auto steady = (1.0 - std::min(1.0, std::abs(shift) / lockBelow)) * (1.0 - std::min(1.0, std::abs(slope - 1.0) / slopeLockBelow));
+        // 많이 늘이거나 줄이는 곳(10% 넘게)에서 세게 끌어당기면 조각 간격이 뒤틀려 소리가 꺼진다: 그런 곳은 경계의 섞기에 맡긴다
+        const auto near = std::abs(shift) < lockBelow && std::abs(slope - 1.0) < 0.1 ? rigidNearness(next) : 0.0;
+        const auto lock = std::max(steady, near);
         if (lock <= 0.0 || marks.empty())
             return next;
         const auto k = static_cast<size_t>(nearestMark(marks, sourceSample(in, next)));
