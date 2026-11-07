@@ -35,17 +35,31 @@ EditTimeMap::EditTimeMap(const std::vector<VocalBlock>& blocks, const VocalFeatu
         for (size_t k = 1; k <= jumpFrames; ++k) low = std::min(low, f.rms[j - k]);
         return f.rms[j] > 2.0 * low + 1e-6;
     };
-    const auto elastic = [&](size_t j) {
-        if (j >= f.size() || f.midiF0[j] <= 0.0) return false;
-        for (size_t k = 1; k <= attackFrames; ++k)
-            if (j < k || f.midiF0[j - k] <= 0.0) return false;
-        for (size_t k = 0; k <= jumpFrames; ++k)
-            if (j >= k && jumps(j - k)) return false;
-        // 음정이 빨리 움직이는 곳(꺾임·미끄러짐: 5 ms에 0.15반음 넘게)도 늘이지 않는다. 늘이면 꺾인 곡선이 끊겨 들린다
-        if (j + 1 < f.size() && f.midiF0[j + 1] > 0.0 && std::abs(f.midiF0[j + 1] - f.midiF0[j]) > 0.15) return false;
-        if (std::abs(f.midiF0[j] - f.midiF0[j - 1]) > 0.15) return false;
-        return true;
-    };
+    // 프레임마다: 0 = 늘여도 되는 모음, 1 = 늘이면 안 됨(무성·소리 시작·클릭), 2 = 음정이 빨리 움직임(꺾임·미끄러짐: 5 ms에 0.15반음 넘게)
+    std::vector<unsigned char> kind(f.size(), 0);
+    for (size_t j = 0; j < f.size(); ++j)
+    {
+        bool hard = f.midiF0[j] <= 0.0;
+        for (size_t k = 1; k <= attackFrames && ! hard; ++k)
+            hard = j < k || f.midiF0[j - k] <= 0.0;
+        for (size_t k = 0; k <= jumpFrames && ! hard; ++k)
+            hard = j >= k && jumps(j - k);
+        const bool moving = ! hard && ((j + 1 < f.size() && f.midiF0[j + 1] > 0.0 && std::abs(f.midiF0[j + 1] - f.midiF0[j]) > 0.15)
+                                       || (j > 0 && std::abs(f.midiF0[j] - f.midiF0[j - 1]) > 0.15));
+        kind[j] = hard ? 1 : moving ? 2 : 0;
+    }
+    // 음정 움직임은 30 ms 넘게 이어질 때만(꺾임·미끄러짐) 고정. 비브라토의 짧은 오르내림까지 고정하면 모음 안에 짧은 고정 조각이
+    // 잘게 생겨 합성과 원본 복사가 25 ms마다 번갈아 이어진다
+    for (size_t j = 0; j < kind.size();)
+    {
+        if (kind[j] != 2) { ++j; continue; }
+        auto end = j;
+        while (end < kind.size() && kind[end] == 2) ++end;
+        if (end - j < 6)
+            for (auto k = j; k < end; ++k) kind[k] = 0;
+        j = end;
+    }
+    const auto elastic = [&](size_t j) { return j < kind.size() && kind[j] == 0; };
     std::vector<double> d2 { display.front() }, s2 { source.front() };
     for (size_t n = 1; n < display.size(); ++n)
     {
