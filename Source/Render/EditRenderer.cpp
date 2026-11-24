@@ -83,6 +83,20 @@ void keepSourceWhereUnchanged(ChunkAudio& out, const AudioPlanes& src, const std
         }
 }
 
+// 프레임 frame의 이동 크기를 앞 30 ms 또는 뒤 30 ms 중 한쪽이 내내 작을 때만 작게 본다 (Psola.cpp settledShift와 같은 규칙).
+// 두 블록 이음에서 이동이 +에서 -로 0을 잠깐 지나가는 몇 ms를 '이동 없음'으로 보고 모음 한가운데에 원본 복사 섬을 만들면
+// PSOLA <-> 복사 전환이 이음마다 생겨 소리가 깨진다 (11/24 측정). 유성 프레임에만 쓴다
+double settledAbsShift(const std::vector<double>& shift, size_t frame) noexcept
+{
+    constexpr size_t reach = 6;
+    double before = 0.0, after = 0.0;
+    for (auto k = frame >= reach ? frame - reach : 0; k <= frame; ++k)
+        before = std::max(before, std::abs(shift[k]));
+    for (auto k = frame; k < std::min(shift.size(), frame + reach + 1); ++k)
+        after = std::max(after, std::abs(shift[k]));
+    return std::min(before, after);
+}
+
 // 박자 변경 구간 안에서 '그대로 옮기기만 하는' 곳(대응 기울기가 1이고 음정 이동이 없는 곳: EditTimeMap이 숨·자음·잡음·어택을
 // 고정으로 둔 조각)은 PSOLA 결과 대신 원본을 그 시간만큼 옮겨 그대로 쓴다. PSOLA는 유성 구간의 클릭·잡음을 조각마다 되풀이해
 // 거슬리지 않던 녹음 잡음을 '틱'으로 만들었다. 경계는 5 ms로 섞는다.
@@ -105,7 +119,10 @@ void copyRigidMoves(ChunkAudio& out, const AudioPlanes& src, const EditGrid& gri
         const bool rigid = std::abs((grid.timeMap->toSource(t + probe) - s) / probe - 1.0) < nearlyRigid
                            && std::abs((s - grid.timeMap->toSource(t - probe)) / probe - 1.0) < nearlyRigid;
         const auto frame = std::min(shift.size() - 1, static_cast<size_t>(std::max(0.0, t / period)));
-        mask[i] = rigid && (shift.empty() || std::abs(shift[frame]) <= tolerance) ? 1.0 : 0.0;
+        // 무성(숨·자음·잡음)은 길이와 상관없이 그대로 복사한다 (박자 규칙). 유성만 이음의 순간적인 0을 무시한다
+        const auto voiced = frame < grid.targetMidi.size() && grid.targetMidi[frame] > 0.0;
+        const auto size = shift.empty() ? 0.0 : (voiced ? settledAbsShift(shift, frame) : std::abs(shift[frame]));
+        mask[i] = rigid && size <= tolerance ? 1.0 : 0.0;
     }
     // 5 ms 이동 평균으로 경계를 부드럽게 (가장자리는 안쪽으로 줄어들도록 최소값 뒤 평균)
     const auto half = static_cast<size_t>(0.0025 * rate);

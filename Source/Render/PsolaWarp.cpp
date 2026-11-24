@@ -88,6 +88,20 @@ struct Warper
         return (sourceSample(in, outSample + probe) - sourceSample(in, outSample)) / probe;
     }
 
+    // 위상 고정에 쓰는 이동 크기 (Psola.cpp settledShift와 같은 규칙): 앞 30 ms 또는 뒤 30 ms 중 한쪽이 내내 작을 때만 작다.
+    // 두 블록 이음에서 이동이 0을 잠깐 지나갈 때 조각을 원본 마크로 끌어당겨 간격이 들쭉날쭉해지는 것을 막는다
+    double settledShift(double t, double shift) const
+    {
+        const auto step = 0.005 * in.sampleRate;
+        double before = std::abs(shift), after = std::abs(shift);
+        for (int d = 1; d <= 6; ++d)
+        {
+            before = std::max(before, std::abs(shiftAtOutput(in, t - d * step)));
+            after = std::max(after, std::abs(shiftAtOutput(in, t + d * step)));
+        }
+        return std::min(before, after);
+    }
+
     // 그대로 옮기는(기울기 1) 곳까지 남은 거리로 본 가까움 0..1 (boundarySec 안, 앞뒤 모두). 렌더러는 그런 곳을 원본 복사로 바꾸므로,
     // 그 경계 둘레의 조각을 원본 마크 자리에 맞춰 두어야 PSOLA와 복사가 위상이 맞게 이어진다 (어긋나면 틱·더블링)
     double rigidNearness(double t) const
@@ -99,7 +113,7 @@ struct Warper
             for (const auto sign : { 1.0, -1.0 })
             {
                 const auto at = t + sign * d * step;
-                if (std::abs(slopeAt(at) - 1.0) < rigidSlope && std::abs(shiftAtOutput(in, at)) < lockBelow)
+                if (std::abs(slopeAt(at) - 1.0) < rigidSlope && settledShift(at, shiftAtOutput(in, at)) < lockBelow)
                     return 1.0 - static_cast<double>(d) / static_cast<double>(steps + 1);
             }
         return 0.0;
@@ -109,9 +123,9 @@ struct Warper
     // 그대로 옮기는 곳에 가까워질수록 더 세게 끌어당긴다
     double lockedNext(double next, double shift, double slope) const
     {
-        const auto steady = (1.0 - std::min(1.0, std::abs(shift) / lockBelow)) * (1.0 - std::min(1.0, std::abs(slope - 1.0) / slopeLockBelow));
+        const auto steady = (1.0 - std::min(1.0, settledShift(next, shift) / lockBelow)) * (1.0 - std::min(1.0, std::abs(slope - 1.0) / slopeLockBelow));
         // 많이 늘이거나 줄이는 곳(10% 넘게)에서 세게 끌어당기면 조각 간격이 뒤틀려 소리가 꺼진다: 그런 곳은 경계의 섞기에 맡긴다
-        const auto near = std::abs(shift) < lockBelow && std::abs(slope - 1.0) < 0.1 ? rigidNearness(next) : 0.0;
+        const auto near = settledShift(next, shift) < lockBelow && std::abs(slope - 1.0) < 0.1 ? rigidNearness(next) : 0.0;
         const auto lock = std::max(steady, near);
         if (lock <= 0.0 || marks.empty())
             return next;

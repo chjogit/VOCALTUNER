@@ -1,0 +1,108 @@
+// 음정 이동 왜곡 위치 찾기용 렌더 CLI (테스트 아님). 플러그인과 같은 경로(분석 -> 블록 -> renderEdited)로 렌더한다.
+//   vt_shift_probe take.wav list                       블록 목록 (번호, 시작, 끝, 중심 MIDI, 자음 여부)
+//   vt_shift_probe take.wav render plan.txt out.wav    plan.txt 줄마다 "블록번호 반음" 또는 "all 반음" (자음 블록 제외)
+// 출력은 32비트 float 모노 wav (양자화로 측정이 흔들리지 않게)
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <string>
+#include "../Source/Render/EditRenderer.h"
+#include "../Source/Render/EditShiftCurves.h"
+#include "WavIO.h"
+
+namespace
+{
+bool writeWavFloat(const char* path, const std::vector<float>& x, int rate)
+{
+    std::ofstream out(path, std::ios::binary);
+    const auto put32 = [&](uint32_t v) { out.write(reinterpret_cast<const char*>(&v), 4); };
+    const auto put16 = [&](uint16_t v) { out.write(reinterpret_cast<const char*>(&v), 2); };
+    const auto bytes = static_cast<uint32_t>(x.size() * 4);
+    out.write("RIFF", 4); put32(36 + bytes); out.write("WAVEfmt ", 8);
+    put32(16); put16(3); put16(1); put32(static_cast<uint32_t>(rate)); put32(static_cast<uint32_t>(rate) * 4); put16(4); put16(32);
+    out.write("data", 4); put32(bytes);
+    out.write(reinterpret_cast<const char*>(x.data()), static_cast<std::streamsize>(bytes));
+    return static_cast<bool>(out);
+}
+
+void applyPlan(const char* path, std::vector<VocalBlock>& blocks)
+{
+    std::ifstream in(path);
+    std::string who;
+    double shift = 0.0;
+    while (in >> who >> shift)
+    {
+        if (who == "all")
+        {
+            for (auto& b : blocks)
+                if (! b.isConsonant) b.pitchShift = shift;
+            continue;
+        }
+        if (who[0] == 't')   // "t블록번호 초": 블록을 그만큼 옮긴다 (박자 편집 -> 문서 전체가 PsolaWarp 경로)
+        {
+            const auto k = static_cast<size_t>(std::atoi(who.c_str() + 1));
+            if (k < blocks.size()) blocks[k].startOffsetSec = blocks[k].endOffsetSec = shift;
+            continue;
+        }
+        const auto k = static_cast<size_t>(std::atoi(who.c_str()));
+        if (k < blocks.size()) blocks[k].pitchShift = shift;
+    }
+}
+} // namespace
+
+int main(int argc, char** argv)
+{
+    if (argc < 3) { std::fprintf(stderr, "usage: vt_shift_probe take.wav list | render plan.txt out.wav\n"); return 2; }
+    std::vector<float> take;
+    int rate = 0;
+    if (! readWavMono(argv[1], take, rate)) { std::fprintf(stderr, "cannot read %s\n", argv[1]); return 1; }
+    const auto features = extractVocalFeatures(std::vector<double>(take.begin(), take.end()), rate);
+    if (! features) return 1;
+    auto blocks = parseBlocks(*features);
+    if (std::strcmp(argv[2], "list") == 0)
+    {
+        for (size_t k = 0; k < blocks.size(); ++k)
+            std::printf("%zu %.3f %.3f %.2f %d\n", k, blocks[k].startSec, blocks[k].endSec,
+                        blocks[k].baseMidi + blocks[k].pitchOffset, blocks[k].isConsonant ? 1 : 0);
+        return 0;
+    }
+    if (argc < 5) return 2;
+    applyPlan(argv[3], blocks);
+    AudioPlanes src;
+    src.sampleRate = rate;
+    src.channels.push_back(take);
+    if (std::strcmp(argv[2], "curve") == 0)   // curve plan.txt dummy: 프레임마다 원본 MIDI, 계획 이동, 자음 보호+모음 중심 뒤 이동
+    {
+        AudioPlanes one;
+        one.sampleRate = rate;
+        one.channels.push_back(take);
+        auto grid = buildGrid(take.size(), rate, *features, blocks);
+        grid.vowelFocus = std::getenv("VT_NOVF") == nullptr;
+        const ChunkSpan all { 0, features->size(), 0, features->size() };
+        const auto raw = psolaShiftCurve(*features, grid, all, 0.05);
+        const auto prot = protectedShift(one, *features, grid, raw, 0, features->size());
+        for (size_t i = 0; i < features->size(); ++i)
+            std::printf("%.3f %.2f %.3f %.3f\n", i * features->framePeriodMs / 1000.0, features->midiF0[i], raw[i], prot[i]);
+        return 0;
+    }
+    RenderOptions options;
+    if (std::getenv("VT_NOVF")) options.vowelFocus = false;   // 실험: 모음 중심 이동 끄기
+    const auto out = renderEdited(src, *features, blocks, options);
+    if (! out) return 1;
+    if (const char* r = std::getenv("VT_RANGECHECK"))   // 실험: 0.5초 구간 렌더(미리 듣기)와 전체 렌더의 최대 차이
+    {
+        double worst = 0.0;
+        for (double a = 0.0; a + 0.5 < take.size() / static_cast<double>(rate); a += std::atof(r))
+        {
+            const auto b0 = static_cast<size_t>(a * rate), b1 = static_cast<size_t>((a + 0.5) * rate);
+            const auto seg = renderEditedRange(src, *features, blocks, b0, b1, options);
+            if (! seg) return 1;
+            for (size_t i = b0; i < b1; ++i)
+                if (i >= seg->startSample && i < seg->endSample())
+                    worst = std::max(worst, static_cast<double>(std::abs(seg->audio.channels[0][i - seg->startSample] - out->channels[0][i])));
+        }
+        std::printf("range max diff %.3g\n", worst);
+    }
+    return writeWavFloat(argv[4], out->channels[0], rate) ? 0 : 1;
+}
