@@ -10,6 +10,8 @@
 #include <string>
 #include "../Source/Render/EditRenderer.h"
 #include "../Source/Render/EditShiftCurves.h"
+#include "../Source/Analysis/BlockTransforms.h"
+#include "../Source/Analysis/PitchFlow.h"
 #include "WavIO.h"
 
 namespace
@@ -34,6 +36,12 @@ void applyPlan(const char* path, std::vector<VocalBlock>& blocks)
     double shift = 0.0;
     while (in >> who >> shift)
     {
+        if (who == "tidy" || who == "drift" || who == "flatten")   // (앞 글자 규칙보다 먼저: "tidy"가 "t블록" 박자 줄로 읽히지 않게) 모든 유성 블록의 중심 음정 / 음정 흐름 / 펴기 양 (UI 슬라이더)
+        {
+            for (auto& b : blocks)
+                if (! b.isConsonant) (who == "tidy" ? b.tidyAmount : who == "drift" ? b.driftAmount : b.flattenAmount) = shift;
+            continue;
+        }
         if (who == "all")
         {
             for (auto& b : blocks)
@@ -117,6 +125,23 @@ int main(int argc, char** argv)
     AudioPlanes src;
     src.sampleRate = rate;
     src.channels.push_back(take);
+    if (std::strcmp(argv[2], "parts") == 0)   // parts plan.txt 프레임: 그 프레임을 가진 블록의 편집 음정 구성
+    {
+        const auto frame = static_cast<size_t>(std::atoi(argv[4]));
+        for (size_t k = 0; k < blocks.size(); ++k)
+            if (frame >= blocks[k].beginFrame && frame < blocks[k].endFrame)
+                std::printf("block %zu midi %.3f flow %.3f shape %.3f edited %.3f tidy %.2f base %d off %.3f target %d\n", k, features->midiF0[frame],
+                            flowPitchShift(*features, blocks, k, frame), shapeOffsetAt(*features, blocks[k], frame), editedPitchAt(*features, blocks, k, frame),
+                            blocks[k].tidyAmount, blocks[k].baseMidi, blocks[k].pitchOffset, blocks[k].centerTargetMidi);
+        return 0;
+    }
+    if (std::strcmp(argv[2], "map") == 0)   // map plan.txt dummy: 출력 1 ms마다 렌더러가 쓰는 원본 시각 (초)
+    {
+        const auto grid = buildGrid(take.size(), rate, *features, blocks);
+        for (double t = 0.0; t < static_cast<double>(take.size()) / rate; t += 0.001)
+            std::printf("%.6f\n", grid.timeMap->toSource(t));
+        return 0;
+    }
     if (std::strcmp(argv[2], "line") == 0)   // line plan.txt dummy: 출력 프레임마다 가져오는 원본 프레임, 그 원본 MIDI, 그린 선(목표 MIDI)
     {
         const auto grid = buildGrid(take.size(), rate, *features, blocks);

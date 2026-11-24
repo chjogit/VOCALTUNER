@@ -319,12 +319,60 @@ VocalBlock withShapeBaked(const VocalFeatures& f, const VocalBlock& b)
     return out;
 }
 
+namespace
+{
+// 블록 b의 모양 보정(펴기·중심·흐름·비브라토)을 b 밖 프레임까지 늘인 값: b 끝쪽 유성 프레임의 보정을 그대로 쓰되,
+// 펴기는 '중심으로 끌어오는 비율'이라 그 프레임 자신의 음정을 기준으로 다시 계산한다
+double shapeOffsetExtended(const VocalFeatures& f, const VocalBlock& b, size_t frame) noexcept
+{
+    if (b.isConsonant || b.endFrame <= b.beginFrame || frame >= f.size())
+        return 0.0;
+    if (frame >= b.beginFrame && frame < b.endFrame)
+        return shapeOffsetAt(f, b, frame);
+    const auto inward = frame < b.beginFrame ? 1L : -1L;
+    auto k = static_cast<long>(frame < b.beginFrame ? b.beginFrame : b.endFrame - 1);
+    for (int n = 0; n < 12 && (k < static_cast<long>(b.beginFrame) || k >= static_cast<long>(b.endFrame) || f.midiF0[static_cast<size_t>(k)] <= 0.0); ++n)
+        k += inward;
+    if (k < static_cast<long>(b.beginFrame) || k >= static_cast<long>(b.endFrame) || f.midiF0[static_cast<size_t>(k)] <= 0.0)
+        return 0.0;
+    const auto at = static_cast<size_t>(k);
+    const auto flatten = std::clamp(b.flattenAmount, 0.0, 1.0);
+    const auto own = flatten > 0.0 && f.midiF0[frame] > 0.0 ? flatten * (b.baseMidi + b.pitchOffset - f.midiF0[frame]) : flattenOffsetAt(f, b, at);
+    return shapeOffsetAt(f, b, at) - flattenOffsetAt(f, b, at) + own;
+}
+
+// 모양 보정을 블록 이음 창에서 앞뒤 블록 값 사이로 부드럽게 바꾼다 (이동량 이음과 같은 창).
+// 예전에는 블록마다 따로 계산해 경계에서 한 프레임에 바뀌어, 흐름 보정 1에서 최대 1.3반음, 펴기 50%에서 최대 3.8반음의
+// 계단이 그린 선에 생겼다 (블록이 한 모음 안에서 나뉜 곳 포함). 11/24
+double blendedShapeAt(const VocalFeatures& f, const std::vector<VocalBlock>& blocks, size_t index, size_t frame) noexcept
+{
+    const auto& cur = blocks[index];
+    const auto own = shapeOffsetAt(f, cur, frame);
+    if (cur.isConsonant || frame >= f.size())
+        return own;
+    const auto t = sourceToDisplaySec(cur, f.timeSec[frame]);
+    const auto across = [&](double a, double b, const PitchJoint& j) {
+        return a + (b - a) * smoothstep((t - (j.timeSec - j.halfWidthSec)) / (2.0 * j.halfWidthSec));
+    };
+    const auto prev = neighbourVoiced(blocks, index, -1), next = neighbourVoiced(blocks, index, +1);
+    const auto before = prev ? jointBetween(blocks, *prev, index) : std::nullopt;
+    const auto after = next ? jointBetween(blocks, index, *next) : std::nullopt;
+    if (before && before->halfWidthSec > 1e-9 && t < before->timeSec + before->halfWidthSec)
+        return across(shapeOffsetExtended(f, blocks[*prev], frame), own, *before);
+    if (after && after->halfWidthSec > 1e-9 && t > after->timeSec - after->halfWidthSec)
+        return across(own, shapeOffsetExtended(f, blocks[*next], frame), *after);
+    // 이음이 없는 블록 머리·꼬리(스쿱, 끝 처짐)는 이동량과 같이 안착부에서만 보정한다 (사용자 원칙: 스쿱·꼬리는 안착부만).
+    // 예전에는 첫 프레임부터 다 보정해, 펴기에서 블록 시작·끝에 최대 수 반음의 계단이 생겼다
+    return own * landingWeight(f, cur, frame, ! before, ! after);
+}
+} // namespace
+
 double editedPitchAt(const VocalFeatures& f, const std::vector<VocalBlock>& blocks, size_t index, size_t frame) noexcept
 {
     const auto& b = blocks[index];
     if (frame < b.beginFrame || frame >= b.endFrame || frame >= f.size() || f.midiF0[frame] <= 0.0)
         return 0.0;
-    auto pitch = f.midiF0[frame] + flowPitchShift(f, blocks, index, frame) + shapeOffsetAt(f, b, frame);
+    auto pitch = f.midiF0[frame] + flowPitchShift(f, blocks, index, frame) + blendedShapeAt(f, blocks, index, frame);
     if (b.curveOffset.size() == b.endFrame - b.beginFrame)
         pitch += static_cast<double>(b.curveOffset[frame - b.beginFrame]);
     return pitch;
