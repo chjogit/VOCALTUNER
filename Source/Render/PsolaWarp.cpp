@@ -55,7 +55,9 @@ std::pair<size_t, size_t> outputExpandedToQuiet(const WarpInput& in, size_t begi
     const auto step = static_cast<size_t>(in.framePeriodSec * in.sampleRate);
     const auto limit = static_cast<size_t>(maxExpandSec * in.sampleRate);
     auto a = begin, b = end;
-    for (size_t run = 0, walked = 0; a > step && run < quietSamples && walked < limit; a -= step, walked += step)
+    // a >= step: 파일 앞까지 유성이면 a가 0 쪽 첫 칸(< step)까지 내려가 아래 격자 맞춤에서 0이 된다.
+    // 예전 a > step은 시작 표본에 따라 0 또는 step(5 ms)에서 멈춰, 파일 앞이 유성일 때 미리 듣기와 재생의 조각 위치가 달랐다
+    for (size_t run = 0, walked = 0; a >= step && run < quietSamples && walked < limit; a -= step, walked += step)
         run = voicedAtOutput(in, static_cast<double>(a - step)) ? 0 : run + step;
     for (size_t run = 0, walked = 0; run < quietSamples && walked < limit; b += step, walked += step)
         run = voicedAtOutput(in, static_cast<double>(b)) ? 0 : run + step;
@@ -102,6 +104,15 @@ struct Warper
         return std::min(before, after);
     }
 
+    // 렌더러가 원본 복사로 바꾸는 자리인지 보는 이동 크기 (EditRenderer copyRigidMoves와 같은 규칙). 이동 곡선은 '바뀌지 않음'
+    // 이하를 정확히 0으로 넣어 주므로 0이면 복사된다: 무성은 그 프레임 값, 유성은 앞뒤 30 ms 중 한쪽이 내내 0일 때만.
+    // 예전에는 |이동| < 0.15이면 복사 경계로 보고 세게 고정해, ±0.2반음 블록 이음에서 모음 한가운데 조각을 끌어당겼다
+    double copiedShift(double t) const
+    {
+        const auto shift = shiftAtOutput(in, t);
+        return voicedAtOutput(in, t) ? settledShift(t, shift) : std::abs(shift);
+    }
+
     // 그대로 옮기는(기울기 1) 곳까지 남은 거리로 본 가까움 0..1 (boundarySec 안, 앞뒤 모두). 렌더러는 그런 곳을 원본 복사로 바꾸므로,
     // 그 경계 둘레의 조각을 원본 마크 자리에 맞춰 두어야 PSOLA와 복사가 위상이 맞게 이어진다 (어긋나면 틱·더블링)
     double rigidNearness(double t) const
@@ -113,7 +124,7 @@ struct Warper
             for (const auto sign : { 1.0, -1.0 })
             {
                 const auto at = t + sign * d * step;
-                if (std::abs(slopeAt(at) - 1.0) < rigidSlope && settledShift(at, shiftAtOutput(in, at)) < lockBelow)
+                if (std::abs(slopeAt(at) - 1.0) < rigidSlope && copiedShift(at) <= 0.0)
                     return 1.0 - static_cast<double>(d) / static_cast<double>(steps + 1);
             }
         return 0.0;

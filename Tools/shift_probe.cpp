@@ -45,6 +45,11 @@ void applyPlan(const char* path, std::vector<VocalBlock>& blocks)
             if (k < blocks.size()) blocks[k].startOffsetSec = blocks[k].endOffsetSec = shift;
             continue;
         }
+        if (who == "joints")   // "joints 양": 모든 블록의 음정 이음 정도 (transitionAfter, 기본 0.5)
+        {
+            for (auto& b : blocks) b.transitionAfter = shift;
+            continue;
+        }
         const auto k = static_cast<size_t>(std::atoi(who.c_str()));
         if (k < blocks.size()) blocks[k].pitchShift = shift;
     }
@@ -92,17 +97,20 @@ int main(int argc, char** argv)
     if (! out) return 1;
     if (const char* r = std::getenv("VT_RANGECHECK"))   // 실험: 0.5초 구간 렌더(미리 듣기)와 전체 렌더의 최대 차이
     {
-        double worst = 0.0;
-        for (double a = 0.0; a + 0.5 < take.size() / static_cast<double>(rate); a += std::atof(r))
+        double worst = 0.0, worstAt = 0.0, worstFrom = 0.0;
+        for (double a = std::getenv("VT_RANGEFROM") ? std::atof(std::getenv("VT_RANGEFROM")) : 0.0; a + 0.5 < take.size() / static_cast<double>(rate); a += std::atof(r))
         {
             const auto b0 = static_cast<size_t>(a * rate), b1 = static_cast<size_t>((a + 0.5) * rate);
             const auto seg = renderEditedRange(src, *features, blocks, b0, b1, options);
             if (! seg) return 1;
             for (size_t i = b0; i < b1; ++i)
                 if (i >= seg->startSample && i < seg->endSample())
-                    worst = std::max(worst, static_cast<double>(std::abs(seg->audio.channels[0][i - seg->startSample] - out->channels[0][i])));
+                {
+                    const auto d = static_cast<double>(std::abs(seg->audio.channels[0][i - seg->startSample] - out->channels[0][i]));
+                    if (d > worst) { worst = d; worstAt = static_cast<double>(i) / rate; worstFrom = a; }
+                }
         }
-        std::printf("range max diff %.3g\n", worst);
+        std::printf("range max diff %.3g at %.4f s (range from %.2f s)\n", worst, worstAt, worstFrom);
     }
     return writeWavFloat(argv[4], out->channels[0], rate) ? 0 : 1;
 }
