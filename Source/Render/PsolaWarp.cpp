@@ -10,6 +10,7 @@ namespace
 {
 constexpr double unvoicedHopSec = 0.005;        // 무성 조각 간격 (조각 길이는 이것의 2배, 50% 겹침 = 합이 1)
 constexpr double slopeProbeSec = 0.001;
+constexpr double nearSlopeBelow = 0.015;         // 복사 경계 가까이 고정은 기울기가 1에서 이만큼 안일 때만 (늘인 곳 제외)
 constexpr double slopeLockBelow = 0.004;         // 원본 흐름 속도가 1에서 이만큼 안이면 박자가 그대로인 것으로 본다
 constexpr double marginSec = 0.05;
 constexpr double maxGapHz = 50.0;                // 마크 간격이 이 주파수의 한 주기보다 길면 같은 유성 구간이 아니다
@@ -136,13 +137,21 @@ struct Warper
     {
         const auto steady = (1.0 - std::min(1.0, settledShift(next, shift) / lockBelow)) * (1.0 - std::min(1.0, std::abs(slope - 1.0) / slopeLockBelow));
         // 많이 늘이거나 줄이는 곳(10% 넘게)에서 세게 끌어당기면 조각 간격이 뒤틀려 소리가 꺼진다: 그런 곳은 경계의 섞기에 맡긴다
-        const auto near = settledShift(next, shift) < lockBelow && std::abs(slope - 1.0) < 0.1 ? rigidNearness(next) : 0.0;
+        // 늘이거나 줄인 곳(기울기 ≠ 1)에서는 원본 마크의 출력 자리가 조각 간격과 늘인 만큼 계속 어긋나, 끌어당기면 음정이 늘인 비율만큼
+        // 끌려간다 (11/24: 10% 늘인 모음에서 50~115센트). 기울기 1에서 1.5% 안일 때만, 가까울수록 세게
+        const auto near = settledShift(next, shift) < lockBelow ? rigidNearness(next) * std::max(0.0, 1.0 - std::abs(slope - 1.0) / nearSlopeBelow) : 0.0;
         const auto lock = std::max(steady, near);
         if (lock <= 0.0 || marks.empty())
             return next;
         const auto k = static_cast<size_t>(nearestMark(marks, sourceSample(in, next)));
         const auto outPos = in.toDisplay(static_cast<double>(marks[k]) / in.sampleRate) * in.sampleRate;
-        return next + lock * 0.5 * (outPos - next);
+        // 음정을 옮기는 곳 둘레에서는 조각 하나에 주기의 2%까지만 (PsolaGrain.h maxLockPull). 박자만 바꾼 곳(이동 0)은 예전처럼
+        // 남은 거리의 절반씩 끌어당겨, 복사 경계의 위상 맞춤(틱·더블링 방지)과 박자만 바꾼 렌더 결과를 그대로 둔다
+        const auto pull = lock * 0.5 * (outPos - next);
+        if (settledShift(next, shift) <= 0.0)
+            return next + pull;
+        const auto limit = maxLockPull * static_cast<double>(periodOf(k));
+        return next + std::clamp(pull, -limit, limit);
     }
 
     void voicedGrain(double& t)

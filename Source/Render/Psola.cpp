@@ -101,6 +101,8 @@ double settledShift(const PsolaInput& in, size_t frame) noexcept
 }
 
 // 한 구간의 마크들로 새 간격의 조각을 겹쳐 놓는다
+// 위상 고정이 조각 하나를 끌어당기는 양은 주기의 2%까지 (조각 간격 = 음정이 그만큼만, 약 35센트 휜다).
+// 예전 '남은 거리의 절반'은 음이 빨리 움직이는 끝에서 간격을 크게 바꿔 그린 선보다 75센트까지 어긋났다 (11/24 선 대비 검사)
 void synthesizeRun(const PsolaInput& in, const std::vector<long>& ms, Synth& s)
 {
     double t = static_cast<double>(ms.front());
@@ -114,7 +116,11 @@ void synthesizeRun(const PsolaInput& in, const std::vector<long>& ms, Synth& s)
         addGrain(in, s, ms[k], static_cast<long>(std::lround(t)), grainHalf(static_cast<long>(period), shift, ratio), ratio);
         auto next = t + period / std::pow(2.0, shift / 12.0);
         if (const auto lock = 1.0 - std::min(1.0, settledShift(in, frame) / lockBelow); lock > 0.0)
-            next += lock * 0.5 * (static_cast<double>(ms[static_cast<size_t>(nearestMark(ms, next))]) - next);
+        {
+            auto pull = lock * 0.5 * (static_cast<double>(ms[static_cast<size_t>(nearestMark(ms, next))]) - next);
+            pull = std::clamp(pull, -maxLockPull * period, maxLockPull * period);
+            next += pull;
+        }
         t = std::max(next, t + period * 0.5);
     }
 }

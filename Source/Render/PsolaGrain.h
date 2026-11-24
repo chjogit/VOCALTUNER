@@ -7,6 +7,7 @@
 namespace psola
 {
 constexpr double lockBelow = 0.15;          // 이동이 이보다 작으면 원본 마크 쪽으로 위상을 끌어당긴다
+constexpr double maxLockPull = 0.02;        // 위상 고정이 조각 하나를 옮기는 최대 양 (주기 비율): 음정 휨 약 35센트 이하 (0.01은 Harvest 음정 튐 6.5반음, PitchSimilarityTests)
 constexpr size_t activeDilateFrames = 8;    // 합성 구간을 앞뒤로 40ms 넓힌다 (마크가 자리 잡을 여유)
 constexpr double maxExpandSec = 20.0;       // 무성 틈을 찾아 넓히는 최대 길이
 constexpr double pi = 3.14159265358979323846;

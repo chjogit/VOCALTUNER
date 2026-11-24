@@ -2,6 +2,7 @@
 //   vt_shift_probe take.wav list                       블록 목록 (번호, 시작, 끝, 중심 MIDI, 자음 여부)
 //   vt_shift_probe take.wav render plan.txt out.wav    plan.txt 줄마다 "블록번호 반음" 또는 "all 반음" (자음 블록 제외)
 // 출력은 32비트 float 모노 wav (양자화로 측정이 흔들리지 않게)
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -45,6 +46,45 @@ void applyPlan(const char* path, std::vector<VocalBlock>& blocks)
             if (k < blocks.size()) blocks[k].startOffsetSec = blocks[k].endOffsetSec = shift;
             continue;
         }
+        if (who[0] == 's')   // "s블록번호 초": 블록 끝만 그만큼 옮긴다 (늘이기/줄이기)
+        {
+            const auto k = static_cast<size_t>(std::atoi(who.c_str() + 1));
+            if (k < blocks.size()) blocks[k].endOffsetSec = shift;
+            continue;
+        }
+        if (who[0] == 'u')   // "u블록번호 시작초 끝초": 시작·끝 이동을 따로 (맞추기처럼 이어진 늘이기/줄이기)
+        {
+            const auto k = static_cast<size_t>(std::atoi(who.c_str() + 1));
+            double end = 0.0;
+            in >> end;
+            if (k < blocks.size()) { blocks[k].startOffsetSec = shift; blocks[k].endOffsetSec = end; }
+            continue;
+        }
+        if (who[0] == 'c')   // "c블록번호 반음": 검사기 양성 대조용 - 블록 곡선에 6프레임(30 ms)마다 0/반음을 번갈아 넣은 계단
+        {
+            const auto k = static_cast<size_t>(std::atoi(who.c_str() + 1));
+            if (k < blocks.size())
+            {
+                auto& b = blocks[k];
+                b.curveOffset.assign(b.endFrame - b.beginFrame, 0.0f);
+                for (size_t i = 0; i < b.curveOffset.size(); ++i) b.curveOffset[i] = (i / 6) % 2 ? static_cast<float>(shift) : 0.0f;
+            }
+            continue;
+        }
+        if (who[0] == 'v' || who[0] == 'r')   // "v블록번호 반음": 5.5 Hz 사인 선, "r블록번호 반음": 블록 처음 0 -> 끝 반음 직선 (그린 선 흉내)
+        {
+            const auto k = static_cast<size_t>(std::atoi(who.c_str() + 1));
+            if (k < blocks.size())
+            {
+                auto& b = blocks[k];
+                const auto n = b.endFrame - b.beginFrame;
+                b.curveOffset.assign(n, 0.0f);
+                for (size_t i = 0; i < n; ++i)
+                    b.curveOffset[i] = static_cast<float>(who[0] == 'v' ? shift * std::sin(2.0 * 3.14159265358979 * 5.5 * 0.005 * static_cast<double>(i))
+                                                                        : shift * static_cast<double>(i) / static_cast<double>(std::max<size_t>(1, n - 1)));
+            }
+            continue;
+        }
         if (who == "joints")   // "joints 양": 모든 블록의 음정 이음 정도 (transitionAfter, 기본 0.5)
         {
             for (auto& b : blocks) b.transitionAfter = shift;
@@ -77,6 +117,16 @@ int main(int argc, char** argv)
     AudioPlanes src;
     src.sampleRate = rate;
     src.channels.push_back(take);
+    if (std::strcmp(argv[2], "line") == 0)   // line plan.txt dummy: 출력 프레임마다 가져오는 원본 프레임, 그 원본 MIDI, 그린 선(목표 MIDI)
+    {
+        const auto grid = buildGrid(take.size(), rate, *features, blocks);
+        for (size_t i = 0; i < grid.size(); ++i)
+        {
+            const auto j = static_cast<size_t>(grid.sourceFrame[i]);
+            std::printf("%.3f %zu %.3f %.3f\n", i * features->framePeriodMs / 1000.0, j, features->midiF0[j], grid.targetMidi[i]);
+        }
+        return 0;
+    }
     if (std::strcmp(argv[2], "curve") == 0)   // curve plan.txt dummy: 프레임마다 원본 MIDI, 계획 이동, 자음 보호+모음 중심 뒤 이동
     {
         AudioPlanes one;
