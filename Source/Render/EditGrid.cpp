@@ -75,6 +75,18 @@ void fillBlockFormant(EditGrid& grid, const VocalBlock& b, double period)
         grid.formantAmount[static_cast<size_t>(i)] = amount;
     grid.formantEdited = grid.formantEdited || first < last;
 }
+// 펴기가 걸린 블록: 합성 조각 간격을 원본 마크 간격(주기마다 들쭉날쭉) 대신 그린 선의 주기로 (펴기 양만큼 섞음)
+void fillBlockLineFollow(EditGrid& grid, const VocalBlock& b, double period)
+{
+    const auto amount = b.isConsonant ? 0.0 : std::clamp(b.flattenAmount, 0.0, 1.0);
+    if (amount <= 0.0)
+        return;
+    const auto first = std::max(0L, std::lround(b.displayStartSec() / period));
+    const auto last = std::min(static_cast<long>(grid.size()), std::lround(b.displayEndSec() / period));
+    for (auto i = first; i < last; ++i)
+        grid.lineFollow[static_cast<size_t>(i)] = amount;
+    grid.lineFollowEdited = grid.lineFollowEdited || first < last;
+}
 } // namespace
 
 EditGrid buildGrid(size_t samples, int sampleRate, const VocalFeatures& f, const std::vector<VocalBlock>& blocks)
@@ -87,6 +99,7 @@ EditGrid buildGrid(size_t samples, int sampleRate, const VocalFeatures& f, const
     grid.originalMidi.assign(n, 0.0);
     grid.gainDb.assign(n, 0.0);
     grid.formantAmount.assign(n, 1.0);
+    grid.lineFollow.assign(n, 0.0);
     if (n == 0)
         return grid;
     grid.lastSourceFrame = static_cast<int>(f.size()) - 1;
@@ -100,6 +113,7 @@ EditGrid buildGrid(size_t samples, int sampleRate, const VocalFeatures& f, const
         scatterBlockPitch(grid, delta, f, blocks, k, period);
         fillBlockGain(grid, blocks, k, period);
         fillBlockFormant(grid, blocks[k], period);
+        fillBlockLineFollow(grid, blocks[k], period);
     }
     // 박자가 바뀐 유성 프레임: 목표 음정을 '이 프레임이 실제로 가져오는 원본 프레임의 음정 + 편집량'으로.
     // 위에서 흩뿌린 값은 원본 프레임을 표시 자리로 반올림해 놓은 것이라, 가져오는 프레임(sourceFrame, 다른 반올림)과 한 칸씩 어긋나

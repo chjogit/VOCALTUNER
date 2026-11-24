@@ -21,6 +21,9 @@ struct PsolaInput
     const double* formantAmount = nullptr;
     // true면 합성한 구간의 음량을 원본에 맞춘다 (PsolaLevel.h). 기본 false = 기존 출력과 비트까지 같다
     bool levelMatch = false;
+    // 프레임마다 조각 간격을 그린 선(원본 음정 + 이동)의 주기로 정하는 정도 (0..1, nullptr = 0: 원본 마크 간격 x 이동 비율, 기존 결과).
+    // 펴기에서 원본의 주기마다 떨림이 남지 않게 쓴다
+    const double* lineFollow = nullptr;
 };
 
 // [beginSample, endSample) 구간의 결과. 옮길 것이 없는 곳(이동 0, 무성)은 원본 샘플 그대로다.

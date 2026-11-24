@@ -85,7 +85,33 @@ void marksInRun(const PsolaInput& in, const std::vector<double>& lp, size_t offs
     }
 }
 
+// 위상 고정에 쓰는 이동 크기: 앞 30 ms 또는 뒤 30 ms 중 한쪽이 내내 작을 때만 작다.
+// 두 블록 이음에서 이동이 +에서 -로 0을 잠깐 지나갈 때(양쪽 모두 큼)는 고정하지 않는다:
+// 그 순간 조각을 원본 마크 쪽으로 끌어당기면 간격이 들쭉날쭉해져 소리가 깨진다 (11/24 측정, 경계 깨짐 25% -> 2%).
+// 원본으로 돌아가는 끝(한쪽이 0으로 머무름)에서는 이전처럼 고정해 원본과 섞일 때 빗살 상쇄가 없다.
+double settledShift(const PsolaInput& in, size_t frame) noexcept
+{
+    constexpr size_t reach = 6;
+    double before = 0.0, after = 0.0;
+    bool exit = false;   // 앞뒤 30 ms 안에 원본으로 돌아가는 프레임(이동이 정확히 0)이 있는지
+    for (size_t k = frame >= reach ? frame - reach : 0; k <= frame; ++k)
+    {
+        before = std::max(before, std::abs(in.shiftSemitones[k]));
+        exit = exit || in.shiftSemitones[k] == 0.0;
+    }
+    for (auto k = frame; k < std::min(in.frames, frame + reach + 1); ++k)
+    {
+        after = std::max(after, std::abs(in.shiftSemitones[k]));
+        exit = exit || in.shiftSemitones[k] == 0.0;
+    }
+    // 원본으로 돌아가지 않는 곳(모음 안에서 이동이 0 근처를 지나기만 하는 곳, EditShiftCurves keptShifts)은 고정하지 않는다:
+    // 위상을 원본 쪽으로 끌면 그만큼 음정이 휜다
+    return exit ? std::min(before, after) : lockBelow;
+}
+
 // 한 구간의 마크들로 새 간격의 조각을 겹쳐 놓는다
+// 위상 고정이 조각 하나를 끌어당기는 양은 주기의 2%까지 (조각 간격 = 음정이 그만큼만, 약 35센트 휜다).
+// 예전 '남은 거리의 절반'은 음이 빨리 움직이는 끝에서 간격을 크게 바꿔 그린 선보다 75센트까지 어긋났다 (11/24 선 대비 검사)
 void synthesizeRun(const PsolaInput& in, const std::vector<long>& ms, Synth& s)
 {
     double t = static_cast<double>(ms.front());
@@ -98,8 +124,14 @@ void synthesizeRun(const PsolaInput& in, const std::vector<long>& ms, Synth& s)
         const auto ratio = formantRatio(formantAmountAt(in, frame), shift);
         addGrain(in, s, ms[k], static_cast<long>(std::lround(t)), grainHalf(static_cast<long>(period), shift, ratio), ratio);
         auto next = t + period / std::pow(2.0, shift / 12.0);
-        if (const auto lock = 1.0 - std::min(1.0, std::abs(shift) / lockBelow); lock > 0.0)
-            next += lock * 0.5 * (static_cast<double>(ms[static_cast<size_t>(nearestMark(ms, next))]) - next);
+        if (const auto w = in.lineFollow == nullptr ? 0.0 : std::clamp(in.lineFollow[frame], 0.0, 1.0); w > 0.0 && in.sourceMidi[frame] > 0.0)
+            next = t + (1.0 - w) * (next - t) + w * in.sampleRate / hzOf(in.sourceMidi[frame] + shift);
+        if (const auto lock = 1.0 - std::min(1.0, settledShift(in, frame) / lockBelow); lock > 0.0)
+        {
+            auto pull = lock * 0.5 * (static_cast<double>(ms[static_cast<size_t>(nearestMark(ms, next))]) - next);
+            pull = std::clamp(pull, -maxLockPull * period, maxLockPull * period);
+            next += pull;
+        }
         t = std::max(next, t + period * 0.5);
     }
 }

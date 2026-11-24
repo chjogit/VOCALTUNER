@@ -83,6 +83,37 @@ void keepSourceWhereUnchanged(ChunkAudio& out, const AudioPlanes& src, const std
         }
 }
 
+// 프레임 frame의 이동 크기를 앞 30 ms 또는 뒤 30 ms 중 한쪽이 내내 작을 때만 작게 본다 (Psola.cpp settledShift와 같은 규칙).
+// 두 블록 이음에서 이동이 +에서 -로 0을 잠깐 지나가는 몇 ms를 '이동 없음'으로 보고 모음 한가운데에 원본 복사 섬을 만들면
+// PSOLA <-> 복사 전환이 이음마다 생겨 소리가 깨진다 (11/24 측정). 유성 프레임에만 쓴다
+double settledAbsShift(const std::vector<double>& shift, size_t frame) noexcept
+{
+    constexpr size_t reach = 6;
+    double before = 0.0, after = 0.0;
+    for (auto k = frame >= reach ? frame - reach : 0; k <= frame; ++k)
+        before = std::max(before, std::abs(shift[k]));
+    for (auto k = frame; k < std::min(shift.size(), frame + reach + 1); ++k)
+        after = std::max(after, std::abs(shift[k]));
+    return std::min(before, after);
+}
+
+constexpr double maxReadBend = 0.003;   // 복사 경계 위상 맞춤이 PSOLA 쪽 음정을 휘게 하는 최대 비율 (약 5센트)
+constexpr double maxAlignSpanSec = 0.25; // 위상 맞춤을 펼치는 최대 길이. warpChunk의 앞뒤 여유(warpMarginSec)보다 짧아야 구간 렌더 = 전체 렌더
+constexpr double warpMarginSec = 0.3;
+
+// 복사 경계 edge에서 PSOLA 쪽(들어가는 경계면 앞, 나오는 경계면 뒤)으로 다른 경계까지의 표본 수 (최대 maxSpan).
+// 렌더 구간의 끝은 보지 않는다: 구간마다 끝이 달라 같은 경계가 다른 폭으로 펼쳐지면 미리 듣기와 재생이 달라진다
+long pcmRoom(const std::vector<std::pair<long, int>>& edges, long edge, int direction, long maxSpan) noexcept
+{
+    long room = maxSpan;
+    for (const auto& [other, d] : edges)
+    {
+        if (direction > 0 && other < edge) room = std::min(room, edge - other);
+        if (direction < 0 && other > edge) room = std::min(room, other - edge);
+    }
+    return room;
+}
+
 // 박자 변경 구간 안에서 '그대로 옮기기만 하는' 곳(대응 기울기가 1이고 음정 이동이 없는 곳: EditTimeMap이 숨·자음·잡음·어택을
 // 고정으로 둔 조각)은 PSOLA 결과 대신 원본을 그 시간만큼 옮겨 그대로 쓴다. PSOLA는 유성 구간의 클릭·잡음을 조각마다 되풀이해
 // 거슬리지 않던 녹음 잡음을 '틱'으로 만들었다. 경계는 5 ms로 섞는다.
@@ -105,7 +136,10 @@ void copyRigidMoves(ChunkAudio& out, const AudioPlanes& src, const EditGrid& gri
         const bool rigid = std::abs((grid.timeMap->toSource(t + probe) - s) / probe - 1.0) < nearlyRigid
                            && std::abs((s - grid.timeMap->toSource(t - probe)) / probe - 1.0) < nearlyRigid;
         const auto frame = std::min(shift.size() - 1, static_cast<size_t>(std::max(0.0, t / period)));
-        mask[i] = rigid && (shift.empty() || std::abs(shift[frame]) <= tolerance) ? 1.0 : 0.0;
+        // 무성(숨·자음·잡음)은 길이와 상관없이 그대로 복사한다 (박자 규칙). 유성만 이음의 순간적인 0을 무시한다
+        const auto voiced = frame < grid.targetMidi.size() && grid.targetMidi[frame] > 0.0;
+        const auto size = shift.empty() ? 0.0 : (voiced ? settledAbsShift(shift, frame) : std::abs(shift[frame]));
+        mask[i] = rigid && size <= tolerance ? 1.0 : 0.0;
     }
     // 5 ms 이동 평균으로 경계를 부드럽게 (가장자리는 안쪽으로 줄어들도록 최소값 뒤 평균)
     const auto half = static_cast<size_t>(0.0025 * rate);
@@ -133,7 +167,7 @@ void copyRigidMoves(ChunkAudio& out, const AudioPlanes& src, const EditGrid& gri
             const auto f = pos - static_cast<double>(k);
             return (1.0 - f) * x[static_cast<size_t>(k)] + f * x[static_cast<size_t>(k + 1)];
         };
-        const auto window = static_cast<long>(0.010 * rate), ramp = static_cast<long>(0.020 * rate), reach = static_cast<long>(0.0015 * rate);
+        const auto window = static_cast<long>(0.010 * rate), reach = static_cast<long>(0.0015 * rate);
         const auto& y0 = out.channels.front();
         std::vector<std::pair<long, int>> edges;   // (경계 표본, +1 = 복사로 들어감, -1 = 복사에서 나옴)
         for (size_t i = 1; i < n; ++i)
@@ -165,13 +199,20 @@ void copyRigidMoves(ChunkAudio& out, const AudioPlanes& src, const EditGrid& gri
                 if (score > best) { best = score; shiftBy = d; }
             }
             if (shiftBy == 0) continue;
-            // PSOLA 쪽을 r(i) * shiftBy 만큼 당겨 읽는다. r은 경계에서 1, ramp만큼 떨어지면 0
+            // PSOLA 쪽을 r(i) * shiftBy 만큼 당겨 읽는다. r은 경계에서 1, span만큼 떨어지면 0.
+            // 읽는 자리를 시간에 따라 옮기면 그만큼 음정이 휜다 (shiftBy / span). 예전 20 ms 고정 폭은 ±1.5 ms를 맞출 때
+            // 최대 7.5% = 1.3반음을 20 ms 동안 휘게 해, 늘인 구간의 복사 경계에서 음정 곡선이 꺾였다 (11/24 선 대비 검사).
+            // 이제 앞(뒤)의 다른 경계까지 최대 250 ms에 걸쳐 옮기고, 휨이 0.3%(5센트)를 넘지 않게 맞춤 양을 줄인다
+            const auto span = std::max(1L, pcmRoom(edges, edge, direction, static_cast<long>(maxAlignSpanSec * rate)));
+            const auto limit = static_cast<long>(maxReadBend * static_cast<double>(span));
+            shiftBy = std::clamp(shiftBy, -limit, limit);
+            if (shiftBy == 0) continue;
             for (size_t c = 0; c < out.channels.size(); ++c)
-                for (long k = 0; k < ramp; ++k)
+                for (long k = 0; k < span; ++k)
                 {
                     const auto i = direction > 0 ? edge - 1 - k : edge + k;
                     if (i < 0 || i >= static_cast<long>(n)) break;
-                    const auto r = 1.0 - static_cast<double>(k) / static_cast<double>(ramp);
+                    const auto r = 1.0 - static_cast<double>(k) / static_cast<double>(span);
                     const auto pos = static_cast<double>(i) + r * static_cast<double>(shiftBy);
                     const auto p = static_cast<long>(std::floor(pos));
                     if (p < 0 || p + 1 >= static_cast<long>(n)) continue;
@@ -198,12 +239,13 @@ void copyRigidMoves(ChunkAudio& out, const AudioPlanes& src, const EditGrid& gri
 
 // 채널마다 PSOLA로 [start, start + samples)를 합성
 void psolaChannels(const AudioPlanes& src, const VocalFeatures& f, double period, const std::vector<double>& shift,
-                   const std::vector<double>& formant, bool levelMatch, ChunkAudio& out, size_t samples)
+                   const std::vector<double>& formant, bool levelMatch, ChunkAudio& out, size_t samples,
+                   const std::vector<double>& lineFollow = {})
 {
     for (const auto& ch : src.channels)
     {
         const PsolaInput in { ch.data(), ch.size(), src.sampleRate, period, f.midiF0.data(), shift.data(), f.size(),
-                              formant.empty() ? nullptr : formant.data(), levelMatch };
+                              formant.empty() ? nullptr : formant.data(), levelMatch, lineFollow.empty() ? nullptr : lineFollow.data() };
         auto y = psolaShift(in, out.startSample, out.startSample + samples);
         y.resize(samples, 0.0f);
         out.channels.push_back(std::move(y));
@@ -219,7 +261,7 @@ ChunkAudio psolaChunk(const AudioPlanes& src, const VocalFeatures& f, const Edit
     // 자음 보호 (+ vowelFocus): 마찰음 같은 프레임의 이동량을 0으로, 모음이 아닌 프레임은 줄인다
     const auto wide = spanToQuiet(f, grid, span);
     const auto shift = protectedShift(src, f, grid, psolaShiftCurve(f, grid, wide, tolerance), wide.begin, wide.end);
-    psolaChannels(src, f, period, shift, psolaFormantCurve(f, grid, wide), grid.levelMatch, out, range.count);
+    psolaChannels(src, f, period, shift, psolaFormantCurve(f, grid, wide), grid.levelMatch, out, range.count, psolaLineFollowCurve(f, grid, wide));
     return out;
 }
 
@@ -233,9 +275,9 @@ ChunkAudio warpChunk(const AudioPlanes& src, const VocalFeatures& f, const EditG
     const auto samples = range.count;
     const auto shift = warpShiftCurve(src, f, grid, spanToQuiet(f, grid, span), tolerance);
     const auto* map = grid.timeMap.get();
-    // 복사 경계의 위상 맞춤은 경계 둘레 30 ms를 보므로, 앞뒤 50 ms를 더 만들어 처리한 뒤 잘라 낸다.
+    // 복사 경계의 위상 맞춤은 경계에서 최대 250 ms까지 펼쳐지므로, 앞뒤 300 ms를 더 만들어 처리한 뒤 잘라 낸다.
     // 그래야 어느 구간을 렌더하든(미리 듣기 구간 렌더 = 전체 렌더) 같은 표본이 같은 값이 된다
-    const auto margin = static_cast<size_t>(0.05 * src.sampleRate);
+    const auto margin = static_cast<size_t>(warpMarginSec * src.sampleRate);
     ChunkAudio wide;
     wide.startSample = out.startSample > margin ? out.startSample - margin : 0;
     const auto lead = out.startSample - wide.startSample;
@@ -244,7 +286,7 @@ ChunkAudio warpChunk(const AudioPlanes& src, const VocalFeatures& f, const EditG
         const WarpInput in { ch.data(), ch.size(), src.sampleRate, period, f.midiF0.data(), f.size(), shift.data(), shift.size(),
                              [map](double t) { return map->toSource(t); }, [map](double s) { return map->toDisplay(s); },
                              grid.formantEdited && grid.formantAmount.size() == shift.size() ? grid.formantAmount.data() : nullptr,
-                             grid.levelMatch };
+                             grid.levelMatch, grid.lineFollowEdited && grid.lineFollow.size() == shift.size() ? grid.lineFollow.data() : nullptr };
         wide.channels.push_back(psolaWarp(in, wide.startSample, out.startSample + samples + margin));
     }
     copyRigidMoves(wide, src, grid, shift, period, tolerance);

@@ -10,6 +10,7 @@ namespace
 {
 constexpr double unvoicedHopSec = 0.005;        // 무성 조각 간격 (조각 길이는 이것의 2배, 50% 겹침 = 합이 1)
 constexpr double slopeProbeSec = 0.001;
+constexpr double nearSlopeBelow = 0.015;         // 복사 경계 가까이 고정은 기울기가 1에서 이만큼 안일 때만 (늘인 곳 제외)
 constexpr double slopeLockBelow = 0.004;         // 원본 흐름 속도가 1에서 이만큼 안이면 박자가 그대로인 것으로 본다
 constexpr double marginSec = 0.05;
 constexpr double maxGapHz = 50.0;                // 마크 간격이 이 주파수의 한 주기보다 길면 같은 유성 구간이 아니다
@@ -55,7 +56,9 @@ std::pair<size_t, size_t> outputExpandedToQuiet(const WarpInput& in, size_t begi
     const auto step = static_cast<size_t>(in.framePeriodSec * in.sampleRate);
     const auto limit = static_cast<size_t>(maxExpandSec * in.sampleRate);
     auto a = begin, b = end;
-    for (size_t run = 0, walked = 0; a > step && run < quietSamples && walked < limit; a -= step, walked += step)
+    // a >= step: 파일 앞까지 유성이면 a가 0 쪽 첫 칸(< step)까지 내려가 아래 격자 맞춤에서 0이 된다.
+    // 예전 a > step은 시작 표본에 따라 0 또는 step(5 ms)에서 멈춰, 파일 앞이 유성일 때 미리 듣기와 재생의 조각 위치가 달랐다
+    for (size_t run = 0, walked = 0; a >= step && run < quietSamples && walked < limit; a -= step, walked += step)
         run = voicedAtOutput(in, static_cast<double>(a - step)) ? 0 : run + step;
     for (size_t run = 0, walked = 0; run < quietSamples && walked < limit; b += step, walked += step)
         run = voicedAtOutput(in, static_cast<double>(b)) ? 0 : run + step;
@@ -88,6 +91,32 @@ struct Warper
         return (sourceSample(in, outSample + probe) - sourceSample(in, outSample)) / probe;
     }
 
+    // 위상 고정에 쓰는 이동 크기 (Psola.cpp settledShift와 같은 규칙): 앞 30 ms 또는 뒤 30 ms 중 한쪽이 내내 작을 때만 작다.
+    // 두 블록 이음에서 이동이 0을 잠깐 지나갈 때 조각을 원본 마크로 끌어당겨 간격이 들쭉날쭉해지는 것을 막는다
+    double settledShift(double t, double shift) const
+    {
+        const auto step = 0.005 * in.sampleRate;
+        double before = std::abs(shift), after = std::abs(shift);
+        bool exit = shift == 0.0;   // 앞뒤 30 ms 안에 원본으로 돌아가는(이동이 정확히 0) 자리가 있는지 (Psola.cpp와 같은 규칙)
+        for (int d = 1; d <= 6; ++d)
+        {
+            const auto a = shiftAtOutput(in, t - d * step), b = shiftAtOutput(in, t + d * step);
+            before = std::max(before, std::abs(a));
+            after = std::max(after, std::abs(b));
+            exit = exit || a == 0.0 || b == 0.0;
+        }
+        return exit ? std::min(before, after) : lockBelow;
+    }
+
+    // 렌더러가 원본 복사로 바꾸는 자리인지 보는 이동 크기 (EditRenderer copyRigidMoves와 같은 규칙). 이동 곡선은 '바뀌지 않음'
+    // 이하를 정확히 0으로 넣어 주므로 0이면 복사된다: 무성은 그 프레임 값, 유성은 앞뒤 30 ms 중 한쪽이 내내 0일 때만.
+    // 예전에는 |이동| < 0.15이면 복사 경계로 보고 세게 고정해, ±0.2반음 블록 이음에서 모음 한가운데 조각을 끌어당겼다
+    double copiedShift(double t) const
+    {
+        const auto shift = shiftAtOutput(in, t);
+        return voicedAtOutput(in, t) ? settledShift(t, shift) : std::abs(shift);
+    }
+
     // 그대로 옮기는(기울기 1) 곳까지 남은 거리로 본 가까움 0..1 (boundarySec 안, 앞뒤 모두). 렌더러는 그런 곳을 원본 복사로 바꾸므로,
     // 그 경계 둘레의 조각을 원본 마크 자리에 맞춰 두어야 PSOLA와 복사가 위상이 맞게 이어진다 (어긋나면 틱·더블링)
     double rigidNearness(double t) const
@@ -99,7 +128,7 @@ struct Warper
             for (const auto sign : { 1.0, -1.0 })
             {
                 const auto at = t + sign * d * step;
-                if (std::abs(slopeAt(at) - 1.0) < rigidSlope && std::abs(shiftAtOutput(in, at)) < lockBelow)
+                if (std::abs(slopeAt(at) - 1.0) < rigidSlope && copiedShift(at) <= 0.0)
                     return 1.0 - static_cast<double>(d) / static_cast<double>(steps + 1);
             }
         return 0.0;
@@ -109,15 +138,23 @@ struct Warper
     // 그대로 옮기는 곳에 가까워질수록 더 세게 끌어당긴다
     double lockedNext(double next, double shift, double slope) const
     {
-        const auto steady = (1.0 - std::min(1.0, std::abs(shift) / lockBelow)) * (1.0 - std::min(1.0, std::abs(slope - 1.0) / slopeLockBelow));
+        const auto steady = (1.0 - std::min(1.0, settledShift(next, shift) / lockBelow)) * (1.0 - std::min(1.0, std::abs(slope - 1.0) / slopeLockBelow));
         // 많이 늘이거나 줄이는 곳(10% 넘게)에서 세게 끌어당기면 조각 간격이 뒤틀려 소리가 꺼진다: 그런 곳은 경계의 섞기에 맡긴다
-        const auto near = std::abs(shift) < lockBelow && std::abs(slope - 1.0) < 0.1 ? rigidNearness(next) : 0.0;
+        // 늘이거나 줄인 곳(기울기 ≠ 1)에서는 원본 마크의 출력 자리가 조각 간격과 늘인 만큼 계속 어긋나, 끌어당기면 음정이 늘인 비율만큼
+        // 끌려간다 (11/24: 10% 늘인 모음에서 50~115센트). 기울기 1에서 1.5% 안일 때만, 가까울수록 세게
+        const auto near = settledShift(next, shift) < lockBelow ? rigidNearness(next) * std::max(0.0, 1.0 - std::abs(slope - 1.0) / nearSlopeBelow) : 0.0;
         const auto lock = std::max(steady, near);
         if (lock <= 0.0 || marks.empty())
             return next;
         const auto k = static_cast<size_t>(nearestMark(marks, sourceSample(in, next)));
         const auto outPos = in.toDisplay(static_cast<double>(marks[k]) / in.sampleRate) * in.sampleRate;
-        return next + lock * 0.5 * (outPos - next);
+        // 음정을 옮기는 곳 둘레에서는 조각 하나에 주기의 2%까지만 (PsolaGrain.h maxLockPull). 박자만 바꾼 곳(이동 0)은 예전처럼
+        // 남은 거리의 절반씩 끌어당겨, 복사 경계의 위상 맞춤(틱·더블링 방지)과 박자만 바꾼 렌더 결과를 그대로 둔다
+        const auto pull = lock * 0.5 * (outPos - next);
+        if (settledShift(next, shift) <= 0.0)
+            return next + pull;
+        const auto limit = maxLockPull * static_cast<double>(periodOf(k));
+        return next + std::clamp(pull, -limit, limit);
     }
 
     void voicedGrain(double& t)
@@ -140,7 +177,14 @@ struct Warper
         const auto shift = shiftAtOutput(in, t);
         const auto ratio = formantRatio(formantAtOutput(in, t), shift);
         addGrain(source, synth, marks[k], std::lround(t), grainHalf(periodOf(k), shift, ratio), ratio);
-        const auto next = t + period / std::pow(2.0, shift / 12.0);
+        auto next = t + period / std::pow(2.0, shift / 12.0);
+        if (in.lineFollow != nullptr && in.outFrames > 0)
+        {
+            const auto w = std::clamp(in.lineFollow[std::min(static_cast<size_t>(std::max(0.0, t / in.sampleRate / in.framePeriodSec)), in.outFrames - 1)], 0.0, 1.0);
+            const auto midi = source.sourceMidi[frameOf(source, std::max(0.0, at))];
+            if (w > 0.0 && midi > 0.0)
+                next = t + (1.0 - w) * (next - t) + w * in.sampleRate / hzOf(midi + shift);
+        }
         t = std::max(lockedNext(next, shift, slopeAt(t)), t + 0.5 * period);
     }
 

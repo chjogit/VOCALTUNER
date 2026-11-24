@@ -14,6 +14,8 @@ struct EditGrid
     std::vector<double> gainDb;
     std::vector<double> formantAmount;  // 프레임마다 포먼트를 원본 자리에 두는 정도 (기본 1)
     bool formantEdited = false;         // 어느 프레임이든 1이 아님
+    std::vector<double> lineFollow;     // 프레임마다 조각 간격을 그린 선에서 직접 정하는 정도 (블록 펴기 양, 기본 0)
+    bool lineFollowEdited = false;      // 어느 프레임이든 0이 아님
     int lastSourceFrame = 0;
     bool levelMatch = false;            // 합성 구간 음량을 원본에 맞춘다 (RenderOptions에서 옴, PsolaLevel.h)
     bool vowelFocus = false;            // 모음에서만 음정을 옮긴다 (RenderOptions에서 옴, VowelWeight.h)
