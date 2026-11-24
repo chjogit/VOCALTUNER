@@ -239,12 +239,13 @@ void copyRigidMoves(ChunkAudio& out, const AudioPlanes& src, const EditGrid& gri
 
 // 채널마다 PSOLA로 [start, start + samples)를 합성
 void psolaChannels(const AudioPlanes& src, const VocalFeatures& f, double period, const std::vector<double>& shift,
-                   const std::vector<double>& formant, bool levelMatch, ChunkAudio& out, size_t samples)
+                   const std::vector<double>& formant, bool levelMatch, ChunkAudio& out, size_t samples,
+                   const std::vector<double>& lineFollow = {})
 {
     for (const auto& ch : src.channels)
     {
         const PsolaInput in { ch.data(), ch.size(), src.sampleRate, period, f.midiF0.data(), shift.data(), f.size(),
-                              formant.empty() ? nullptr : formant.data(), levelMatch };
+                              formant.empty() ? nullptr : formant.data(), levelMatch, lineFollow.empty() ? nullptr : lineFollow.data() };
         auto y = psolaShift(in, out.startSample, out.startSample + samples);
         y.resize(samples, 0.0f);
         out.channels.push_back(std::move(y));
@@ -260,7 +261,7 @@ ChunkAudio psolaChunk(const AudioPlanes& src, const VocalFeatures& f, const Edit
     // 자음 보호 (+ vowelFocus): 마찰음 같은 프레임의 이동량을 0으로, 모음이 아닌 프레임은 줄인다
     const auto wide = spanToQuiet(f, grid, span);
     const auto shift = protectedShift(src, f, grid, psolaShiftCurve(f, grid, wide, tolerance), wide.begin, wide.end);
-    psolaChannels(src, f, period, shift, psolaFormantCurve(f, grid, wide), grid.levelMatch, out, range.count);
+    psolaChannels(src, f, period, shift, psolaFormantCurve(f, grid, wide), grid.levelMatch, out, range.count, psolaLineFollowCurve(f, grid, wide));
     return out;
 }
 
@@ -285,7 +286,7 @@ ChunkAudio warpChunk(const AudioPlanes& src, const VocalFeatures& f, const EditG
         const WarpInput in { ch.data(), ch.size(), src.sampleRate, period, f.midiF0.data(), f.size(), shift.data(), shift.size(),
                              [map](double t) { return map->toSource(t); }, [map](double s) { return map->toDisplay(s); },
                              grid.formantEdited && grid.formantAmount.size() == shift.size() ? grid.formantAmount.data() : nullptr,
-                             grid.levelMatch };
+                             grid.levelMatch, grid.lineFollowEdited && grid.lineFollow.size() == shift.size() ? grid.lineFollow.data() : nullptr };
         wide.channels.push_back(psolaWarp(in, wide.startSample, out.startSample + samples + margin));
     }
     copyRigidMoves(wide, src, grid, shift, period, tolerance);

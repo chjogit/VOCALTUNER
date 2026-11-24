@@ -177,7 +177,14 @@ struct Warper
         const auto shift = shiftAtOutput(in, t);
         const auto ratio = formantRatio(formantAtOutput(in, t), shift);
         addGrain(source, synth, marks[k], std::lround(t), grainHalf(periodOf(k), shift, ratio), ratio);
-        const auto next = t + period / std::pow(2.0, shift / 12.0);
+        auto next = t + period / std::pow(2.0, shift / 12.0);
+        if (in.lineFollow != nullptr && in.outFrames > 0)
+        {
+            const auto w = std::clamp(in.lineFollow[std::min(static_cast<size_t>(std::max(0.0, t / in.sampleRate / in.framePeriodSec)), in.outFrames - 1)], 0.0, 1.0);
+            const auto midi = source.sourceMidi[frameOf(source, std::max(0.0, at))];
+            if (w > 0.0 && midi > 0.0)
+                next = t + (1.0 - w) * (next - t) + w * in.sampleRate / hzOf(midi + shift);
+        }
         t = std::max(lockedNext(next, shift, slopeAt(t)), t + 0.5 * period);
     }
 

@@ -124,6 +124,8 @@ void synthesizeRun(const PsolaInput& in, const std::vector<long>& ms, Synth& s)
         const auto ratio = formantRatio(formantAmountAt(in, frame), shift);
         addGrain(in, s, ms[k], static_cast<long>(std::lround(t)), grainHalf(static_cast<long>(period), shift, ratio), ratio);
         auto next = t + period / std::pow(2.0, shift / 12.0);
+        if (const auto w = in.lineFollow == nullptr ? 0.0 : std::clamp(in.lineFollow[frame], 0.0, 1.0); w > 0.0 && in.sourceMidi[frame] > 0.0)
+            next = t + (1.0 - w) * (next - t) + w * in.sampleRate / hzOf(in.sourceMidi[frame] + shift);
         if (const auto lock = 1.0 - std::min(1.0, settledShift(in, frame) / lockBelow); lock > 0.0)
         {
             auto pull = lock * 0.5 * (static_cast<double>(ms[static_cast<size_t>(nearestMark(ms, next))]) - next);

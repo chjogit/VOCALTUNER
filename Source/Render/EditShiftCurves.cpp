@@ -73,6 +73,17 @@ std::vector<double> psolaFormantCurve(const VocalFeatures& f, const EditGrid& gr
     return amount;
 }
 
+// 프레임마다 조각 간격을 그린 선에서 정하는 정도 (박자 그대로일 때 표시 프레임 = 원본 프레임). 없으면 비어 있다
+std::vector<double> psolaLineFollowCurve(const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span)
+{
+    if (! grid.lineFollowEdited)
+        return {};
+    std::vector<double> amount(f.size(), 0.0);
+    for (auto i = span.begin; i < std::min({ span.end, f.size(), grid.size() }); ++i)
+        amount[i] = grid.lineFollow[i];
+    return amount;
+}
+
 // 원본 프레임 기준 이동량 shift의 [first, last)에 자음 보호(와 vowelFocus면 모음 가중치)를 적용. 첫 채널로 판단한다 (채널마다 다르면 소리가 갈라진다)
 std::vector<double> protectedShift(const AudioPlanes& src, const VocalFeatures& f, const EditGrid& grid, const std::vector<double>& shift,
                                    size_t first, size_t last)

@@ -24,6 +24,7 @@ struct WarpInput
     std::function<double(double)> toDisplay;  // 원본 초 -> 출력 초
     const double* formantAmount = nullptr;  // 출력 시간 프레임마다 포먼트를 원본 자리에 두는 정도 (nullptr = 1)
     bool levelMatch = false;                // true면 합성 구간 음량을 원본에 맞춘다 (PsolaLevel.h). 기본 false = 기존 출력과 같다
+    const double* lineFollow = nullptr;     // 출력 프레임마다 조각 간격을 그린 선의 주기로 정하는 정도 (Psola.h, nullptr = 0)
 };
 
 // 출력 샘플 [outBegin, outEnd)의 결과. 앞뒤 무성 틈까지 넓혀 계산하므로 어느 구간을 잘라 렌더해도 같은 샘플은 같은 값이다.
