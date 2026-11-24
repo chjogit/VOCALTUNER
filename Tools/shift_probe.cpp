@@ -113,6 +113,11 @@ int main(int argc, char** argv)
     const auto features = extractVocalFeatures(std::vector<double>(take.begin(), take.end()), rate);
     if (! features) return 1;
     auto blocks = parseBlocks(*features);
+    if (std::strcmp(argv[2], "f0") == 0)   // 플러그인이 이 소리에서 그리는 음정 (Harvest, 5 ms, 0 = 무성)
+    {
+        for (const auto m : features->midiF0) std::printf("%.4f\n", m);
+        return 0;
+    }
     if (std::strcmp(argv[2], "list") == 0)
     {
         for (size_t k = 0; k < blocks.size(); ++k)

@@ -97,12 +97,15 @@ struct Warper
     {
         const auto step = 0.005 * in.sampleRate;
         double before = std::abs(shift), after = std::abs(shift);
+        bool exit = shift == 0.0;   // 앞뒤 30 ms 안에 원본으로 돌아가는(이동이 정확히 0) 자리가 있는지 (Psola.cpp와 같은 규칙)
         for (int d = 1; d <= 6; ++d)
         {
-            before = std::max(before, std::abs(shiftAtOutput(in, t - d * step)));
-            after = std::max(after, std::abs(shiftAtOutput(in, t + d * step)));
+            const auto a = shiftAtOutput(in, t - d * step), b = shiftAtOutput(in, t + d * step);
+            before = std::max(before, std::abs(a));
+            after = std::max(after, std::abs(b));
+            exit = exit || a == 0.0 || b == 0.0;
         }
-        return std::min(before, after);
+        return exit ? std::min(before, after) : lockBelow;
     }
 
     // 렌더러가 원본 복사로 바꾸는 자리인지 보는 이동 크기 (EditRenderer copyRigidMoves와 같은 규칙). 이동 곡선은 '바뀌지 않음'

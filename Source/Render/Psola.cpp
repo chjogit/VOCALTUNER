@@ -93,11 +93,20 @@ double settledShift(const PsolaInput& in, size_t frame) noexcept
 {
     constexpr size_t reach = 6;
     double before = 0.0, after = 0.0;
+    bool exit = false;   // 앞뒤 30 ms 안에 원본으로 돌아가는 프레임(이동이 정확히 0)이 있는지
     for (size_t k = frame >= reach ? frame - reach : 0; k <= frame; ++k)
+    {
         before = std::max(before, std::abs(in.shiftSemitones[k]));
+        exit = exit || in.shiftSemitones[k] == 0.0;
+    }
     for (auto k = frame; k < std::min(in.frames, frame + reach + 1); ++k)
+    {
         after = std::max(after, std::abs(in.shiftSemitones[k]));
-    return std::min(before, after);
+        exit = exit || in.shiftSemitones[k] == 0.0;
+    }
+    // 원본으로 돌아가지 않는 곳(모음 안에서 이동이 0 근처를 지나기만 하는 곳, EditShiftCurves keptShifts)은 고정하지 않는다:
+    // 위상을 원본 쪽으로 끌면 그만큼 음정이 휜다
+    return exit ? std::min(before, after) : lockBelow;
 }
 
 // 한 구간의 마크들로 새 간격의 조각을 겹쳐 놓는다

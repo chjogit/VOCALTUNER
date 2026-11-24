@@ -20,17 +20,46 @@ ChunkSpan spanToQuiet(const VocalFeatures& f, const EditGrid& grid, const ChunkS
     return wide;
 }
 
-// 프레임마다 옮길 반음 (원본 프레임 기준). 원래 무성이거나 tolerance 이하면 0
+namespace
+{
+constexpr size_t passingFrames = 30;  // 앞뒤 150 ms: 모음 안에서 이보다 짧게 0 근처에 머무는 곳은 원본으로 돌아가지 않는다
+constexpr double keptMinimum = 0.006; // 계속 합성하는 프레임의 최소 이동량 (0.6센트): PSOLA가 '이동 없음'으로 보고 원본으로 섞지 않게
+
+// 프레임 i의 편집량을 '바뀌지 않음'(0)으로 볼지: |d| <= tolerance 이고, 앞 150 ms나 뒤 150 ms 중 한쪽이 내내 tolerance 이하일 때만.
+// 펴기·음정 흐름처럼 모음 안에서 편집량이 비브라토마다 +에서 -로 0을 지나가면, 그 몇 프레임을 0으로 잘라 합성 <-> 원본이
+// 초당 10번 넘게 바뀌었다 (선풍기 앞에서 내는 소리처럼 끊기고, 원본으로 돌아갈 때마다 밀린 위상을 따라잡느라 음정이 30~40센트 튐.
+// 11/24 사용자 캡처). 짧게 0 근처에 머무는 곳도 계속 합성하면 위상을 따라잡을 일이 없다
+bool unchangedAt(const std::vector<double>& d, size_t i, double tolerance) noexcept
+{
+    if (std::isnan(d[i]) || std::abs(d[i]) > tolerance)
+        return std::isnan(d[i]);
+    double before = 0.0, after = 0.0;
+    for (auto k = i >= passingFrames ? i - passingFrames : 0; k <= i; ++k)
+        before = std::max(before, std::isnan(d[k]) ? 0.0 : std::abs(d[k]));
+    for (auto k = i; k < std::min(d.size(), i + passingFrames + 1); ++k)
+        after = std::max(after, std::isnan(d[k]) ? 0.0 : std::abs(d[k]));
+    return std::min(before, after) <= tolerance;
+}
+
+// 편집량 d(유성이 아니면 NaN)를 이동 곡선으로: 바뀌지 않는 곳만 0
+std::vector<double> keptShifts(const std::vector<double>& d, double tolerance)
+{
+    std::vector<double> out(d.size(), 0.0);
+    for (size_t i = 0; i < d.size(); ++i)
+        if (! unchangedAt(d, i, tolerance))
+            out[i] = std::abs(d[i]) >= keptMinimum ? d[i] : (d[i] < 0.0 ? -keptMinimum : keptMinimum);
+    return out;
+}
+} // namespace
+
+// 프레임마다 옮길 반음 (원본 프레임 기준). 원래 무성이거나 바뀌지 않는 곳(unchangedAt)이면 0
 std::vector<double> psolaShiftCurve(const VocalFeatures& f, const EditGrid& grid, const ChunkSpan& span, double tolerance)
 {
-    std::vector<double> shift(f.size(), 0.0);
+    std::vector<double> d(f.size(), std::nan(""));
     for (auto i = span.begin; i < std::min(span.end, f.size()); ++i)
-    {
-        const auto d = grid.targetMidi[i] - grid.originalMidi[i];
-        if (grid.originalMidi[i] > 0.0 && grid.targetMidi[i] > 0.0 && std::abs(d) > tolerance)
-            shift[i] = d;
-    }
-    return shift;
+        if (grid.originalMidi[i] > 0.0 && grid.targetMidi[i] > 0.0)
+            d[i] = grid.targetMidi[i] - grid.originalMidi[i];
+    return keptShifts(d, tolerance);
 }
 
 // 프레임마다 포먼트를 원본 자리에 두는 정도 (원본 프레임 기준, 박자 편집이 없을 때 표시 프레임 = 원본 프레임). 편집이 없으면 비어 있다
@@ -63,18 +92,22 @@ std::pair<size_t, size_t> shiftsBySource(const VocalFeatures& f, const EditGrid&
                                          std::vector<double>& out, std::vector<double>& bySource)
 {
     size_t lo = f.size(), hi = 0;
+    std::vector<double> d(out.size(), std::nan(""));
     for (auto i = span.begin; i < span.end; ++i)
     {
         const auto j = static_cast<size_t>(grid.sourceFrame[i]);
-        const auto d = grid.targetMidi[i] - f.midiF0[j];
-        if (f.midiF0[j] > 0.0 && grid.targetMidi[i] > 0.0 && std::abs(d) > tolerance)
-        {
-            out[i] = d;
-            bySource[j] = d;
-        }
+        if (f.midiF0[j] > 0.0 && grid.targetMidi[i] > 0.0)
+            d[i] = grid.targetMidi[i] - f.midiF0[j];
         lo = std::min(lo, j);
         hi = std::max(hi, j + 1);
     }
+    const auto kept = keptShifts(d, tolerance);
+    for (auto i = span.begin; i < span.end; ++i)
+        if (kept[i] != 0.0)
+        {
+            out[i] = kept[i];
+            bySource[static_cast<size_t>(grid.sourceFrame[i])] = kept[i];
+        }
     return { lo, hi };
 }
 } // namespace
